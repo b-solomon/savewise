@@ -1,0 +1,47 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Outfit', sans-serif;
+  --color-dark-bg: #060710;
+  --color-dark-card: rgba(14, 16, 28, 0.7);
+  --color-dark-border: rgba(255, 255, 255, 0.07);
+  --color-savings: #10b981;
+  --color-savings-light: #34d399;
+  --color-accent: #6366f1;
+  --color-expense: #ef4444;
+  --color-income: #10b981;
+  --color-warning: #f59e0b;
+  --color-profit: #10b981;
+  --color-loss: #ef4444;
+}
+
+body { font-family: var(--font-sans); background: var(--color-dark-bg); color: #e5e7eb; overflow-x: hidden; -webkit-font-smoothing: antialiased; }
+
+.glass { background: rgba(12, 14, 26, 0.72); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.06); box-shadow: 0 8px 32px rgba(0,0,0,0.4); }
+.glass-hover { transition: all 0.3s cubic-bezier(0.4,0,0.2,1); }
+.glass-hover:hover { background: rgba(18,22,42,0.85); border-color: rgba(16,185,129,0.25); box-shadow: 0 12px 40px rgba(16,185,129,0.1); transform: translateY(-2px); }
+.glass-input { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.07); color: #fff; transition: all 0.2s; }
+.glass-input:focus { background: rgba(255,255,255,0.06); border-color: var(--color-savings); outline: none; box-shadow: 0 0 20px rgba(16,185,129,0.2); }
+.text-gradient { background: linear-gradient(135deg,#34d399 0%,#10b981 50%,#059669 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.text-gradient-accent { background: linear-gradient(135deg,#818cf8 0%,#6366f1 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+.glow-green { box-shadow: 0 0 50px rgba(16,185,129,0.12); }
+.glow-accent { box-shadow: 0 0 50px rgba(99,102,241,0.12); }
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+@keyframes pulseGlow { 0%,100% { opacity: 0.15; transform: scale(1); } 50% { opacity: 0.3; transform: scale(1.05); } }
+.animate-glow { animation: pulseGlow 10s infinite ease-in-out; }
+@keyframes slideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+.animate-slide-in { animation: slideIn 0.3s ease-out; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+.animate-fade-up { animation: fadeUp 0.4s ease-out; }
+
+.recharts-default-tooltip { background: rgba(12,14,26,0.95) !important; border: 1px solid rgba(255,255,255,0.08) !important; border-radius: 10px !important; }
+.recharts-tooltip-item { color: #e5e7eb !important; }
+
+select option { background: #0e1020; color: #e5e7eb; }
