@@ -90,12 +90,18 @@ Rules:
   if (!aiResponse) {
     const openrouter = getOpenRouterClient();
     if (openrouter) {
+      const chatMsgs = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }))];
       try {
-        const chatMsgs = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }))];
         const completion = await openrouter.chat.completions.create({ model: 'google/gemini-2.5-flash', messages: chatMsgs, max_tokens: 1000, temperature: 0.7 });
         aiResponse = completion.choices[0].message.content;
       } catch (err) {
-        console.error('OpenRouter error:', err.message);
+        console.error('OpenRouter paid model error, trying free fallback:', err.message);
+        try {
+          const completion = await openrouter.chat.completions.create({ model: 'google/gemini-2.5-flash:free', messages: chatMsgs, max_tokens: 1000, temperature: 0.7 });
+          aiResponse = completion.choices[0].message.content;
+        } catch (freeErr) {
+          console.error('OpenRouter free model error:', freeErr.message);
+        }
       }
     }
   }
@@ -158,20 +164,32 @@ User data: ${JSON.stringify(ctx)}`;
   if (errorOccurred || !report) {
     const openrouter = getOpenRouterClient();
     if (openrouter) {
+      const messagesPayload = [
+        { role: 'system', content: 'You are a certified financial advisor analyzing real data. Use ₹ amounts. Be specific and actionable. Format in markdown.' },
+        { role: 'user', content: prompt }
+      ];
       try {
         const completion = await openrouter.chat.completions.create({
           model: 'google/gemini-2.5-flash',
-          messages: [
-            { role: 'system', content: 'You are a certified financial advisor analyzing real data. Use ₹ amounts. Be specific and actionable. Format in markdown.' },
-            { role: 'user', content: prompt }
-          ],
+          messages: messagesPayload,
           max_tokens: 1500
         });
         report = completion.choices[0].message.content;
         errorOccurred = false; // Reset error flag since OpenRouter succeeded
       } catch (err) {
-        console.error('OpenRouter error during report generation:', err.message);
-        errorOccurred = true;
+        console.error('OpenRouter paid model error during report generation, trying free fallback:', err.message);
+        try {
+          const completion = await openrouter.chat.completions.create({
+            model: 'google/gemini-2.5-flash:free',
+            messages: messagesPayload,
+            max_tokens: 1500
+          });
+          report = completion.choices[0].message.content;
+          errorOccurred = false; // Reset error flag since OpenRouter succeeded
+        } catch (freeErr) {
+          console.error('OpenRouter free model error during report generation:', freeErr.message);
+          errorOccurred = true;
+        }
       }
     } else {
       errorOccurred = true;
