@@ -1,10 +1,10 @@
+import 'dotenv/config';
 import express from 'express';
 import os from 'os';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
-import dotenv from 'dotenv';
 import { query } from './database.js';
 import { parseSMS, parseBulkSMS } from './smsParser.js';
 import { importCSV } from './csvImporter.js';
@@ -12,7 +12,6 @@ import { getLivePrices, searchSymbol } from './marketData.js';
 import { handleAiChat, generateMonthlyReport } from './aiAdvisor.js';
 import { getAppKey, encrypt, decrypt } from './crypto.js';
 
-dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET || 'savewise_secret';
