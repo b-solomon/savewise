@@ -6,24 +6,31 @@ let openrouterInstance = null;
 
 function getOpenAIClient() {
   if (!openaiInstance && process.env.OPENAI_API_KEY) {
-    openaiInstance = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const key = process.env.OPENAI_API_KEY.trim();
+    if (key) {
+      openaiInstance = new OpenAI({ apiKey: key });
+    }
   }
   return openaiInstance;
 }
 
 function getOpenRouterClient() {
   if (!openrouterInstance && process.env.OPENROUTER_API_KEY) {
-    openrouterInstance = new OpenAI({
-      apiKey: process.env.OPENROUTER_API_KEY,
-      baseURL: "https://openrouter.ai/api/v1",
-      defaultHeaders: {
-        "HTTP-Referer": "http://localhost:3001",
-        "X-Title": "SaveWise"
-      }
-    });
+    const key = process.env.OPENROUTER_API_KEY.trim();
+    if (key) {
+      openrouterInstance = new OpenAI({
+        apiKey: key,
+        baseURL: "https://openrouter.ai/api/v1",
+        defaultHeaders: {
+          "HTTP-Referer": "http://localhost:3001",
+          "X-Title": "SaveWise"
+        }
+      });
+    }
   }
   return openrouterInstance;
 }
+
 
 async function buildContext(userId, month) {
   const txns = await query.all('SELECT type, amount, category, merchant, date FROM transactions WHERE user_id = ? AND date LIKE ?', [userId, month + '%']);
