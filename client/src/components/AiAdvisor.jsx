@@ -2,18 +2,28 @@ import { useState, useRef, useEffect } from 'react';
 import { Send, Sparkles, FileText, X } from 'lucide-react';
 const TIPS = ['Where can I cut spending?','Am I on track for my savings goals?','Analyze my spending this month','How can I save ₹5000 more?','Review my stock portfolio','Which budget am I exceeding?'];
 
-export default function AiAdvisor({ token }) {
-  const [msgs, setMsgs] = useState([]);
+export default function AiAdvisor({ token, user }) {
+  const [msgs, setMsgs] = useState(() => {
+    const saved = localStorage.getItem(`sw_chat_${user?.id || 'default'}`);
+    return saved ? JSON.parse(saved) : [];
+  });
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [report, setReport] = useState(null);
   const btm = useRef(null);
+  
   useEffect(()=>{btm.current?.scrollIntoView({behavior:'smooth'});},[msgs]);
+
+  useEffect(() => {
+    if (msgs.length > 0) {
+      localStorage.setItem(`sw_chat_${user?.id || 'default'}`, JSON.stringify(msgs));
+    }
+  }, [msgs, user?.id]);
 
   const send = async (text) => {
     if (!text.trim()) return;
-    const user = {sender:'user',text:text.trim(),timestamp:new Date().toISOString()};
-    const up = [...msgs,user]; setMsgs(up); setInput(''); setLoading(true);
+    const userMsg = {sender:'user',text:text.trim(),timestamp:new Date().toISOString()};
+    const up = [...msgs,userMsg]; setMsgs(up); setInput(''); setLoading(true);
     try {
       const r = await fetch('/api/ai/chat',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({messages:up})});
       const d = await r.json(); setMsgs(p=>[...p,d]);
@@ -39,7 +49,14 @@ export default function AiAdvisor({ token }) {
           <div className="p-2 rounded-xl bg-gradient-to-tr from-accent to-savings"><Sparkles className="h-5 w-5 text-white" /></div>
           <div><h2 className="text-base font-display font-bold text-white">SaveWise AI Advisor</h2><p className="text-[10px] text-gray-500">Powered by your real spending & portfolio data</p></div>
         </div>
-        <button onClick={getReport} disabled={loading} className="px-3 py-1.5 rounded-lg glass text-[10px] text-gray-300 hover:text-white font-medium cursor-pointer flex items-center gap-1.5"><FileText className="h-3 w-3" />Monthly Report</button>
+        <div className="flex gap-2">
+          {msgs.length > 0 && (
+            <button onClick={() => { setMsgs([]); localStorage.removeItem(`sw_chat_${user?.id || 'default'}`); }} className="px-3 py-1.5 rounded-lg glass text-[10px] text-expense hover:bg-expense/10 hover:text-white font-medium cursor-pointer flex items-center gap-1.5">
+              Clear Chat
+            </button>
+          )}
+          <button onClick={getReport} disabled={loading} className="px-3 py-1.5 rounded-lg glass text-[10px] text-gray-300 hover:text-white font-medium cursor-pointer flex items-center gap-1.5"><FileText className="h-3 w-3" />Monthly Report</button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-3">
