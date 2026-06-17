@@ -121,6 +121,7 @@ Rules:
 export async function generateMonthlyReport(userId, month) {
   let report = '';
   let errorOccurred = false;
+  const ctx = await buildContext(userId, month);
 
   const prompt = `Generate a comprehensive monthly financial report for ${month}. Include:
 1. Spending analysis — where money went, biggest expenses
