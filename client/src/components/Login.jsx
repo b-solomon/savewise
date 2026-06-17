@@ -15,7 +15,16 @@ export default function Login({ onLoginSuccess }) {
       const ep = isRegister ? '/api/auth/register' : '/api/auth/login';
       const body = isRegister ? { email, password, name } : { email, password };
       const res = await fetch(ep, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const data = await res.json();
+      
+      let data = {};
+      const ct = res.headers.get('content-type');
+      if (ct && ct.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const txt = await res.text();
+        throw new Error(txt.slice(0, 150) || 'Server returned an invalid non-JSON response');
+      }
+      
       if (!res.ok) throw new Error(data.error || 'Auth failed');
       onLoginSuccess(data.token, data.user);
     } catch (err) { setError(err.message); } finally { setLoading(false); }

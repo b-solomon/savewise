@@ -8,8 +8,9 @@ const __dirname = path.dirname(__filename);
 let dbType = 'sqlite';
 let sqliteDb = null;
 let pgPool = null;
+export let isDbConnected = false;
+export let dbConnectionError = null;
 
-// Initializer
 async function initDatabase() {
   if (process.env.DATABASE_URL) {
     console.log('Detected DATABASE_URL. Connecting to PostgreSQL...');
@@ -26,6 +27,7 @@ async function initDatabase() {
         try {
           await pgPool.query('SELECT NOW()');
           dbType = 'postgres';
+          isDbConnected = true;
           console.log('Connected to PostgreSQL (Supabase) successfully!');
           await initializePgSchema();
           return;
@@ -33,18 +35,28 @@ async function initDatabase() {
           retries--;
           console.error(`PostgreSQL connection attempt failed. Retries remaining: ${retries}. Error: ${err.message}`);
           if (retries === 0) {
-            console.error('CRITICAL: Failed to connect to PostgreSQL after 5 attempts. Exiting process to prevent silent SQLite fallback and data loss.');
-            process.exit(1);
+            isDbConnected = false;
+            dbConnectionError = err.message;
+            console.error('CRITICAL: Failed to connect to PostgreSQL after 5 attempts. Running in database-offline mode.');
+          } else {
+            await new Promise(resolve => setTimeout(resolve, 3000));
           }
-          await new Promise(resolve => setTimeout(resolve, 3000));
         }
       }
     } catch (err) {
+      isDbConnected = false;
+      dbConnectionError = err.message;
       console.error('CRITICAL: Initialization error for PostgreSQL Pool:', err.message);
-      process.exit(1);
     }
   } else {
-    setupSQLite();
+    try {
+      setupSQLite();
+      isDbConnected = true;
+    } catch (err) {
+      isDbConnected = false;
+      dbConnectionError = err.message;
+      console.error('CRITICAL: Failed to initialize SQLite schema:', err.message);
+    }
   }
 }
 
@@ -332,6 +344,9 @@ initDatabase();
 
 export const query = {
   run(sql, params = []) {
+    if (!isDbConnected) {
+      return Promise.reject(new Error(`Database connection is offline. Error: ${dbConnectionError || 'No connection string'}`));
+    }
     if (dbType === 'postgres') {
       const tSql = translateSql(sql);
       return pgPool.query(tSql, params)
@@ -348,6 +363,9 @@ export const query = {
     }
   },
   get(sql, params = []) {
+    if (!isDbConnected) {
+      return Promise.reject(new Error(`Database connection is offline. Error: ${dbConnectionError || 'No connection string'}`));
+    }
     if (dbType === 'postgres') {
       const tSql = translateSql(sql);
       return pgPool.query(tSql, params)
@@ -361,6 +379,9 @@ export const query = {
     }
   },
   all(sql, params = []) {
+    if (!isDbConnected) {
+      return Promise.reject(new Error(`Database connection is offline. Error: ${dbConnectionError || 'No connection string'}`));
+    }
     if (dbType === 'postgres') {
       const tSql = translateSql(sql);
       return pgPool.query(tSql, params)
@@ -375,4 +396,4 @@ export const query = {
   }
 };
 
-export default { sqliteDb, pgPool, query };
+export default { sqliteDb, pgPool, query, isDbConnected, dbConnectionError };
