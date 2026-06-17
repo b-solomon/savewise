@@ -153,7 +153,7 @@ app.post('/api/transactions', auth, async (req, res) => {
 });
 
 app.delete('/api/transactions/:id', auth, async (req, res) => {
-  try { await query.run('DELETE FROM transactions WHERE id=? AND user_id=?', [req.params.id, req.user.id]); res.json({ message: 'Deleted' }); }
+  try { await query.run('DELETE FROM transactions WHERE id=? AND user_id=?', [parseInt(req.params.id, 10), req.user.id]); res.json({ message: 'Deleted' }); }
   catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
 
@@ -276,7 +276,7 @@ app.post('/api/holdings', auth, async (req, res) => {
 });
 
 app.delete('/api/holdings/:id', auth, async (req, res) => {
-  try { await query.run('DELETE FROM holdings WHERE id=? AND user_id=?', [req.params.id, req.user.id]); res.json({ message: 'Deleted' }); }
+  try { await query.run('DELETE FROM holdings WHERE id=? AND user_id=?', [parseInt(req.params.id, 10), req.user.id]); res.json({ message: 'Deleted' }); }
   catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
 
@@ -303,7 +303,7 @@ app.post('/api/budgets', auth, async (req, res) => {
 });
 
 app.delete('/api/budgets/:id', auth, async (req, res) => {
-  try { await query.run('DELETE FROM budgets WHERE id=? AND user_id=?', [req.params.id, req.user.id]); res.json({ message: 'Deleted' }); }
+  try { await query.run('DELETE FROM budgets WHERE id=? AND user_id=?', [parseInt(req.params.id, 10), req.user.id]); res.json({ message: 'Deleted' }); }
   catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
 
@@ -326,13 +326,13 @@ app.put('/api/savings-goals/:id/contribute', auth, async (req, res) => {
   const { amount } = req.body;
   if (!amount || amount <= 0) return res.status(400).json({ error: 'Valid amount required' });
   try {
-    await query.run('UPDATE savings_goals SET current_amount=current_amount+? WHERE id=? AND user_id=?', [parseFloat(amount), req.params.id, req.user.id]);
-    res.json(await query.get('SELECT * FROM savings_goals WHERE id=?', [req.params.id]));
+    await query.run('UPDATE savings_goals SET current_amount=current_amount+? WHERE id=? AND user_id=?', [parseFloat(amount), parseInt(req.params.id, 10), req.user.id]);
+    res.json(await query.get('SELECT * FROM savings_goals WHERE id=?', [parseInt(req.params.id, 10)]));
   } catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
 
 app.delete('/api/savings-goals/:id', auth, async (req, res) => {
-  try { await query.run('DELETE FROM savings_goals WHERE id=? AND user_id=?', [req.params.id, req.user.id]); res.json({ message: 'Deleted' }); }
+  try { await query.run('DELETE FROM savings_goals WHERE id=? AND user_id=?', [parseInt(req.params.id, 10), req.user.id]); res.json({ message: 'Deleted' }); }
   catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
 
