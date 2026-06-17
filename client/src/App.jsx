@@ -37,7 +37,7 @@ export default function App() {
 
   const content = () => {
     switch (tab) {
-      case 'dashboard': return <Dashboard token={token} />;
+      case 'dashboard': return <Dashboard token={token} setActiveTab={setTab} />;
       case 'transactions': return <Transactions token={token} categories={categories} addToast={toast} />;
       case 'portfolio': return <Portfolio token={token} addToast={toast} />;
       case 'budgets': return <Budgets token={token} categories={categories} addToast={toast} />;

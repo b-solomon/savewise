@@ -1,17 +1,41 @@
 import { useState, useEffect } from 'react';
-import { IndianRupee, ArrowUpRight, ArrowDownRight, ChevronLeft, ChevronRight, AlertTriangle, TrendingUp, Briefcase } from 'lucide-react';
+import { IndianRupee, ArrowUpRight, ArrowDownRight, ChevronLeft, ChevronRight, AlertTriangle, TrendingUp, Briefcase, X } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
 
 const CAT_ICONS = {'Food & Dining':'🍕','Transport':'🚗','Shopping':'🛍️','Rent':'🏠','Bills & Utilities':'📱','Entertainment':'🎬','Health':'💊','Education':'📚','Groceries':'🛒','Insurance':'🛡️','EMI & Loans':'🏦','Other':'📌','Salary':'💰','Freelance':'💻','Investment':'📈','Refund':'↩️','Other Income':'💵'};
 
-export default function Dashboard({ token }) {
+export default function Dashboard({ token, setActiveTab }) {
   const [s, setS] = useState(null);
   const [month, setMonth] = useState(() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; });
+  const [showReportBanner, setShowReportBanner] = useState(false);
+  const [prevMonthName, setPrevMonthName] = useState('');
 
   useEffect(() => {
     fetch(`/api/dashboard/summary?month=${month}`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r=>r.json()).then(setS).catch(console.error);
   }, [month, token]);
+
+  useEffect(() => {
+    const now = new Date();
+    let prevYear = now.getFullYear();
+    let prevMonth = now.getMonth(); // 0-indexed (0=Jan), representing previous month
+    if (prevMonth === 0) {
+      prevMonth = 12;
+      prevYear -= 1;
+    }
+    const prevMonthStr = `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
+    const prevMonthLabel = new Date(prevYear, prevMonth - 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    setPrevMonthName(prevMonthLabel);
+
+    fetch(`/api/ai/monthly-report?month=${prevMonthStr}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => {
+        if (d && d.report) {
+          setShowReportBanner(true);
+        }
+      })
+      .catch(console.error);
+  }, [token]);
 
   const chgMonth = (d) => { const [y,m] = month.split('-').map(Number); const dt = new Date(y,m-1+d,1); setMonth(`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`); };
   const mLabel = () => { const [y,m] = month.split('-'); return new Date(y,m-1).toLocaleDateString('en-IN',{month:'long',year:'numeric'}); };
@@ -30,6 +54,27 @@ export default function Dashboard({ token }) {
           <button onClick={()=>chgMonth(1)} className="text-gray-400 hover:text-white cursor-pointer"><ChevronRight className="h-4 w-4" /></button>
         </div>
       </div>
+
+      {/* Auto Monthly Report Banner */}
+      {showReportBanner && (
+        <div className="glass rounded-2xl p-4 border-l-4 border-l-savings flex items-center justify-between animate-fade-up">
+          <div className="flex items-center gap-3">
+            <span className="text-xl">📊</span>
+            <div>
+              <h4 className="text-xs font-semibold text-white">Monthly Report Ready</h4>
+              <p className="text-[10px] text-gray-400 mt-0.5">Your automated financial analysis for {prevMonthName} is available.</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <button onClick={() => setActiveTab('ai')} className="px-3 py-1.5 rounded-lg bg-savings text-white text-[10px] font-semibold hover:bg-savings-light transition-all cursor-pointer">
+              Read Report
+            </button>
+            <button onClick={() => setShowReportBanner(false)} className="p-1 rounded-lg text-gray-400 hover:text-white cursor-pointer hover:bg-white/5">
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">

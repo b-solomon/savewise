@@ -2,9 +2,27 @@ import OpenAI from 'openai';
 import { query } from './database.js';
 
 let openaiInstance = null;
-function getClient() {
-  if (!openaiInstance && process.env.OPENAI_API_KEY) openaiInstance = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let openrouterInstance = null;
+
+function getOpenAIClient() {
+  if (!openaiInstance && process.env.OPENAI_API_KEY) {
+    openaiInstance = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  }
   return openaiInstance;
+}
+
+function getOpenRouterClient() {
+  if (!openrouterInstance && process.env.OPENROUTER_API_KEY) {
+    openrouterInstance = new OpenAI({
+      apiKey: process.env.OPENROUTER_API_KEY,
+      baseURL: "https://openrouter.ai/api/v1",
+      defaultHeaders: {
+        "HTTP-Referer": "http://localhost:3001",
+        "X-Title": "SaveWise"
+      }
+    });
+  }
+  return openrouterInstance;
 }
 
 async function buildContext(userId, month) {
@@ -47,14 +65,36 @@ Rules:
 - If they have a portfolio, mention stock performance
 - End with a brief disclaimer: "This is AI-generated guidance, not certified financial advice."`;
 
-  const openai = getClient();
+  let aiResponse = null;
 
+  // Try OpenAI first
+  const openai = getOpenAIClient();
   if (openai) {
     try {
       const chatMsgs = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }))];
       const completion = await openai.chat.completions.create({ model: 'gpt-4o-mini', messages: chatMsgs, max_tokens: 1000, temperature: 0.7 });
-      return { text: completion.choices[0].message.content, sender: 'ai', timestamp: new Date().toISOString() };
-    } catch (err) { console.error('OpenAI error:', err.message); }
+      aiResponse = completion.choices[0].message.content;
+    } catch (err) { 
+      console.error('OpenAI error, falling back to OpenRouter...', err.message); 
+    }
+  }
+
+  // Try OpenRouter next
+  if (!aiResponse) {
+    const openrouter = getOpenRouterClient();
+    if (openrouter) {
+      try {
+        const chatMsgs = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }))];
+        const completion = await openrouter.chat.completions.create({ model: 'google/gemini-2.5-flash', messages: chatMsgs, max_tokens: 1000, temperature: 0.7 });
+        aiResponse = completion.choices[0].message.content;
+      } catch (err) {
+        console.error('OpenRouter error:', err.message);
+      }
+    }
+  }
+
+  if (aiResponse) {
+    return { text: aiResponse, sender: 'ai', timestamp: new Date().toISOString() };
   }
 
   // Offline fallback
@@ -68,19 +108,14 @@ Rules:
   } else {
     reply = `**${month} Financial Snapshot:**\n\n• 💰 Income: ₹${ctx.totalIncome.toLocaleString('en-IN')}\n• 💸 Expenses: ₹${ctx.totalExpenses.toLocaleString('en-IN')}\n• 📊 Balance: ₹${ctx.balance.toLocaleString('en-IN')}\n• 📋 Transactions: ${ctx.txnCount}\n\nTop spending: ${ctx.topSpending.slice(0, 3).map(c => `${c.category} (₹${c.spent.toLocaleString('en-IN')})`).join(', ')}\n\nAsk me about cutting expenses, tracking goals, or portfolio analysis!`;
   }
-  return { text: reply + '\n\n*Using offline mode. Connect OpenAI key for richer analysis.*', sender: 'ai', timestamp: new Date().toISOString() };
+  return { text: reply + '\n\n*Using offline mode. Configure an OpenAI or OpenRouter key for richer analysis.*', sender: 'ai', timestamp: new Date().toISOString() };
 }
 
 export async function generateMonthlyReport(userId, month) {
-  const ctx = await buildContext(userId, month);
-  const openai = getClient();
-  
   let report = '';
   let errorOccurred = false;
 
-  if (openai) {
-    try {
-      const prompt = `Generate a comprehensive monthly financial report for ${month}. Include:
+  const prompt = `Generate a comprehensive monthly financial report for ${month}. Include:
 1. Spending analysis — where money went, biggest expenses
 2. Budget performance — which budgets were exceeded
 3. Savings progress — goal tracking
@@ -90,6 +125,10 @@ export async function generateMonthlyReport(userId, month) {
 
 User data: ${JSON.stringify(ctx)}`;
 
+  // Try OpenAI first
+  const openai = getOpenAIClient();
+  if (openai) {
+    try {
       const completion = await openai.chat.completions.create({
         model: 'gpt-4o-mini',
         messages: [
@@ -100,11 +139,35 @@ User data: ${JSON.stringify(ctx)}`;
       });
       report = completion.choices[0].message.content;
     } catch (err) {
-      console.error('OpenAI error during monthly report generation:', err.message);
+      console.error('OpenAI error during report generation, trying OpenRouter...', err.message);
       errorOccurred = true;
     }
   } else {
     errorOccurred = true;
+  }
+
+  // Try OpenRouter next
+  if (errorOccurred || !report) {
+    const openrouter = getOpenRouterClient();
+    if (openrouter) {
+      try {
+        const completion = await openrouter.chat.completions.create({
+          model: 'google/gemini-2.5-flash',
+          messages: [
+            { role: 'system', content: 'You are a certified financial advisor analyzing real data. Use ₹ amounts. Be specific and actionable. Format in markdown.' },
+            { role: 'user', content: prompt }
+          ],
+          max_tokens: 1500
+        });
+        report = completion.choices[0].message.content;
+        errorOccurred = false; // Reset error flag since OpenRouter succeeded
+      } catch (err) {
+        console.error('OpenRouter error during report generation:', err.message);
+        errorOccurred = true;
+      }
+    } else {
+      errorOccurred = true;
+    }
   }
 
   const savingsRate = ctx.totalIncome > 0 ? Math.round((ctx.balance / ctx.totalIncome) * 100) : 0;

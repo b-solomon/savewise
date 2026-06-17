@@ -158,6 +158,57 @@ app.delete('/api/transactions/:id', auth, async (req, res) => {
   catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
 
+app.post('/api/sync/simulate', auth, async (req, res) => {
+  const { bank } = req.body;
+  if (!bank) return res.status(400).json({ error: 'Bank name required' });
+
+  const now = new Date();
+  const dateStr = (offsetDays) => {
+    const d = new Date();
+    d.setDate(now.getDate() - offsetDays);
+    return d.toISOString().split('T')[0];
+  };
+
+  const mockTxns = [
+    { type: 'income', amount: 85000, category: 'Salary', description: `Salary from TCS via NEFT to ${bank}`, merchant: 'TCS', date: dateStr(25), paymentMethod: 'NEFT' },
+    { type: 'expense', amount: 480, category: 'Food & Dining', description: 'Paid to Swiggy via UPI', merchant: 'Swiggy', date: dateStr(2), paymentMethod: 'UPI' },
+    { type: 'expense', amount: 620, category: 'Food & Dining', description: 'Spent at Zomato via UPI', merchant: 'Zomato', date: dateStr(4), paymentMethod: 'UPI' },
+    { type: 'expense', amount: 2200, category: 'Transport', description: 'Fuel purchase at Shell', merchant: 'Shell', date: dateStr(10), paymentMethod: 'Credit Card' },
+    { type: 'expense', amount: 15000, category: 'Rent', description: 'Monthly rent paid to Landlord', merchant: 'Landlord', date: dateStr(5), paymentMethod: 'Net Banking' },
+    { type: 'expense', amount: 3500, category: 'Shopping', description: 'Spent at Flipkart via UPI', merchant: 'Flipkart', date: dateStr(7), paymentMethod: 'UPI' },
+    { type: 'expense', amount: 1200, category: 'Shopping', description: 'Spent at Amazon', merchant: 'Amazon', date: dateStr(12), paymentMethod: 'Credit Card' },
+    { type: 'expense', amount: 649, category: 'Entertainment', description: 'Subscription for Netflix', merchant: 'Netflix', date: dateStr(1), paymentMethod: 'Auto Debit' },
+    { type: 'expense', amount: 450, category: 'Health', description: 'Medicines at Apollo Pharmacy', merchant: 'Apollo Pharmacy', date: dateStr(15), paymentMethod: 'UPI' },
+    { type: 'income', amount: 12000, category: 'Freelance', description: 'Freelance client payment', merchant: 'Upwork', date: dateStr(18), paymentMethod: 'IMPS' },
+    { type: 'expense', amount: 5000, category: 'Investment', description: 'SIP Investment via Groww', merchant: 'Groww', date: dateStr(20), paymentMethod: 'UPI' },
+    { type: 'expense', amount: 890, category: 'Groceries', description: 'Grocery shopping at Blinkit', merchant: 'Blinkit', date: dateStr(3), paymentMethod: 'UPI' },
+    { type: 'expense', amount: 799, category: 'Bills & Utilities', description: 'Airtel Broadband Bill', merchant: 'Airtel', date: dateStr(8), paymentMethod: 'Auto Debit' }
+  ];
+
+  try {
+    const key = getAppKey();
+    let imported = 0;
+    for (const t of mockTxns) {
+      const exists = await query.get(
+        'SELECT id FROM transactions WHERE user_id = ? AND amount = ? AND merchant = ? AND date = ?',
+        [req.user.id, t.amount, t.merchant, t.date]
+      );
+      if (!exists) {
+        await query.run(
+          'INSERT INTO transactions (user_id,type,amount,amount_enc,category,description,merchant,merchant_enc,date,payment_method,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+          [req.user.id, t.type, t.amount, encrypt(String(t.amount), key), t.category, t.description, t.merchant, encrypt(t.merchant, key), t.date, t.paymentMethod, 'sync']
+        );
+        imported++;
+      }
+    }
+    res.json({ message: `Successfully connected ${bank} and synced ${imported} transactions.`, count: imported });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Failed to simulate bank sync data' });
+  }
+});
+
+
 // ═══ DASHBOARD ═══
 app.get('/api/dashboard/summary', auth, async (req, res) => {
   const month = req.query.month || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
