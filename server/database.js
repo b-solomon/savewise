@@ -20,14 +20,28 @@ async function initDatabase() {
         connectionString: process.env.DATABASE_URL,
         ssl: { rejectUnauthorized: false } // Required for Supabase secure connections
       });
-      // Test connection
-      await pgPool.query('SELECT NOW()');
-      dbType = 'postgres';
-      console.log('Connected to PostgreSQL (Supabase) successfully!');
-      await initializePgSchema();
+      
+      let retries = 5;
+      while (retries > 0) {
+        try {
+          await pgPool.query('SELECT NOW()');
+          dbType = 'postgres';
+          console.log('Connected to PostgreSQL (Supabase) successfully!');
+          await initializePgSchema();
+          return;
+        } catch (err) {
+          retries--;
+          console.error(`PostgreSQL connection attempt failed. Retries remaining: ${retries}. Error: ${err.message}`);
+          if (retries === 0) {
+            console.error('CRITICAL: Failed to connect to PostgreSQL after 5 attempts. Exiting process to prevent silent SQLite fallback and data loss.');
+            process.exit(1);
+          }
+          await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+      }
     } catch (err) {
-      console.error('Failed to connect to PostgreSQL, falling back to SQLite:', err.message);
-      setupSQLite();
+      console.error('CRITICAL: Initialization error for PostgreSQL Pool:', err.message);
+      process.exit(1);
     }
   } else {
     setupSQLite();

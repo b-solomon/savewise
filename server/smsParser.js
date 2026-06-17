@@ -64,16 +64,48 @@ function parseAmount(text) {
 }
 
 function parseDate(text) {
+  const currentYear = new Date().getFullYear();
   for (const pat of DATE_PATTERNS) {
     const m = text.match(pat);
     if (m) {
       const raw = m[1].trim();
-      const dd = raw.match(/(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})/);
-      if (dd) { let [,d,mo,y] = dd; if (y.length === 2) y = '20'+y; return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`; }
-      const mm = raw.match(/(\d{1,2})\s*([A-Za-z]{3})\w*[\s,]*(\d{2,4})/);
-      if (mm) { let [,d,mon,y] = mm; if (y.length === 2) y = '20'+y; const mi = MONTHS[mon.toLowerCase().slice(0,3)]; if (mi !== undefined) return `${y}-${String(mi+1).padStart(2,'0')}-${d.padStart(2,'0')}`; }
+      // Try dd/mm/yyyy or dd/mm/yy or dd/mm
+      const dd = raw.match(/^(\d{1,2})[-\/](\d{1,2})(?:[-\/](\d{2,4}))?$/);
+      if (dd) {
+        let [, d, mo, y] = dd;
+        if (!y) y = String(currentYear);
+        else if (y.length === 2) y = '20' + y;
+        return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+      }
+      // Try dd-mon-yyyy or dd-mon-yy or dd-mon
+      const mm = raw.match(/^(\d{1,2})\s*[-\s]?\s*([A-Za-z]{3})\w*(?:\s*[-\s,]*\s*(\d{2,4}))?$/i);
+      if (mm) {
+        let [, d, mon, y] = mm;
+        if (!y) y = String(currentYear);
+        else if (y.length === 2) y = '20' + y;
+        const mi = MONTHS[mon.toLowerCase().slice(0, 3)];
+        if (mi !== undefined) return `${y}-${String(mi + 1).padStart(2, '0')}-${d.padStart(2, '0')}`;
+      }
     }
   }
+
+  // Fallback to generic regex matching anywhere in the text if patterns didn't parse clean
+  const genericDD = text.match(/\b(\d{1,2})[-\/](\d{1,2})[-\/](\d{2,4})\b/);
+  if (genericDD) {
+    let [, d, mo, y] = genericDD;
+    if (y.length === 2) y = '20' + y;
+    return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+
+  const genericMM = text.match(/\b(\d{1,2})\s*[-\s]?\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*(?:\s*[-\s,]*\s*(\d{2,4}))?\b/i);
+  if (genericMM) {
+    let [, d, mon, y] = genericMM;
+    if (!y) y = String(currentYear);
+    else if (y.length === 2) y = '20' + y;
+    const mi = MONTHS[mon.toLowerCase().slice(0, 3)];
+    if (mi !== undefined) return `${y}-${String(mi + 1).padStart(2, '0')}-${d.padStart(2, '0')}`;
+  }
+
   return new Date().toISOString().split('T')[0];
 }
 

@@ -26,7 +26,9 @@ export default function AiAdvisor({ token, user }) {
     const up = [...msgs,userMsg]; setMsgs(up); setInput(''); setLoading(true);
     try {
       const r = await fetch('/api/ai/chat',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({messages:up})});
-      const d = await r.json(); setMsgs(p=>[...p,d]);
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || 'Failed to get AI response');
+      setMsgs(p=>[...p,d]);
     } catch(e) { setMsgs(p=>[...p,{sender:'ai',text:`Error: ${e.message}`,timestamp:new Date().toISOString()}]); }
     finally { setLoading(false); }
   };
@@ -35,12 +37,17 @@ export default function AiAdvisor({ token, user }) {
     setLoading(true);
     try {
       const r = await fetch('/api/ai/monthly-report',{headers:{Authorization:`Bearer ${token}`}});
-      const d = await r.json(); setReport(d);
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error || 'Failed to get monthly report');
+      setReport(d);
     } catch(e) { setReport({error:e.message}); }
     finally { setLoading(false); }
   };
 
-  const fmt = (t) => t.replace(/\*\*(.*?)\*\*/g,'<strong class="text-white">$1</strong>').replace(/\n- /g,'\n• ').replace(/\n/g,'<br/>');
+  const fmt = (t) => {
+    if (!t) return '';
+    return t.replace(/\*\*(.*?)\*\*/g,'<strong class="text-white">$1</strong>').replace(/\n- /g,'\n• ').replace(/\n/g,'<br/>');
+  };
 
   return (
     <div className="flex-1 flex flex-col max-h-screen">

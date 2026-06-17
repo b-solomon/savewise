@@ -48,7 +48,7 @@ export default function App() {
       case 'portfolio': return <Portfolio token={token} addToast={toast} />;
       case 'budgets': return <Budgets token={token} categories={categories} addToast={toast} />;
       case 'savings': return <SavingsGoals token={token} addToast={toast} />;
-      case 'ai': return <AiAdvisor token={token} user={user} />;
+      case 'ai': return <AiAdvisor key={user?.id || 'default'} token={token} user={user} />;
       default: return <Dashboard token={token} />;
     }
   };

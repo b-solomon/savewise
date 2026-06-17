@@ -24,15 +24,28 @@ function findColumn(headers, pattern) {
 }
 
 function parseCSVDate(dateStr) {
-  if (!dateStr) return new Date().toISOString().split('T')[0];
+  if (!dateStr) return null;
   const d = dateStr.trim();
   // DD/MM/YYYY or DD-MM-YYYY
-  const m1 = d.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  const m1 = d.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
   if (m1) { let [,day,mon,yr] = m1; if (yr.length === 2) yr = '20'+yr; return `${yr}-${mon.padStart(2,'0')}-${day.padStart(2,'0')}`; }
+  
+  // DD-MMM-YYYY or DD-MMM-YY (e.g. 10-Jun-2026 or 10-Jun-26)
+  const m2 = d.match(/^(\d{1,2})[-\/\s]([A-Za-z]{3,9})[-\/\s](\d{2,4})$/);
+  if (m2) {
+    let [,day,mon,yr] = m2;
+    if (yr.length === 2) yr = '20'+yr;
+    const MONTHS = { jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11 };
+    const mi = MONTHS[mon.toLowerCase().slice(0,3)];
+    if (mi !== undefined) return `${yr}-${String(mi+1).padStart(2,'0')}-${day.padStart(2,'0')}`;
+  }
+
   // Try native parse
   const parsed = new Date(d);
-  if (!isNaN(parsed)) return parsed.toISOString().split('T')[0];
-  return new Date().toISOString().split('T')[0];
+  if (!isNaN(parsed) && parsed.getFullYear() > 1990 && parsed.getFullYear() < 2100) {
+    return parsed.toISOString().split('T')[0];
+  }
+  return null;
 }
 
 function parseNumber(val) {
@@ -108,7 +121,9 @@ export function importCSV(csvContent) {
 
   const results = [];
   for (const row of dataRows) {
-    if (!row[dateCol] && !row[descCol]) continue; // skip empty rows
+    const parsedDate = parseCSVDate(row[dateCol]);
+    if (!parsedDate) continue; // skip invalid dates (helps filter summary/footer rows)
+    if (!row[descCol]) continue; // skip if description is empty
 
     const debit = debitCol >= 0 ? parseNumber(row[debitCol]) : 0;
     const credit = creditCol >= 0 ? parseNumber(row[creditCol]) : 0;
@@ -126,7 +141,7 @@ export function importCSV(csvContent) {
       category,
       description: desc,
       merchant: desc.slice(0, 40),
-      date: parseCSVDate(row[dateCol]),
+      date: parsedDate,
       paymentMethod: 'Net Banking',
       source: 'csv'
     });
