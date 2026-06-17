@@ -1,7 +1,8 @@
-import { Wallet, LayoutDashboard, ArrowLeftRight, TrendingUp, Target, PiggyBank, MessageSquareCode, LogOut, User, Shield, X } from 'lucide-react';
+import { Wallet, LayoutDashboard, ArrowLeftRight, TrendingUp, Target, PiggyBank, MessageSquareCode, LogOut, User, Shield, X, Smartphone } from 'lucide-react';
 const MENU = [
   { id:'dashboard', name:'Dashboard', icon: LayoutDashboard },
   { id:'transactions', name:'Transactions', icon: ArrowLeftRight },
+  { id:'sync', name:'Bank Sync', icon: Smartphone },
   { id:'portfolio', name:'Portfolio', icon: TrendingUp },
   { id:'budgets', name:'Budgets', icon: Target },
   { id:'savings', name:'Savings Goals', icon: PiggyBank },

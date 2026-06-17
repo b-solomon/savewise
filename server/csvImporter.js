@@ -72,11 +72,26 @@ export function importCSV(csvContent) {
     return { error: `CSV parse error: ${e.message}`, results: [] };
   }
 
-  if (records.length < 2) return { error: 'CSV has no data rows', results: [] };
+  if (records.length < 1) return { error: 'CSV has no data', results: [] };
 
-  // First row = headers
-  const headers = records[0].map(h => String(h).trim());
-  const dataRows = records.slice(1);
+  // Find the header row index by scanning the first 15 rows
+  let headerIndex = 0;
+  for (let i = 0; i < Math.min(15, records.length); i++) {
+    const row = records[i].map(c => String(c).toLowerCase().trim());
+    const hasDate = row.some(c => /date|txn/i.test(c));
+    const hasDesc = row.some(c => /description|narration|particular|remark|detail/i.test(c));
+    if (hasDate && hasDesc) {
+      headerIndex = i;
+      break;
+    }
+  }
+
+  if (headerIndex >= records.length) {
+    headerIndex = 0;
+  }
+
+  const headers = records[headerIndex].map(h => String(h).trim());
+  const dataRows = records.slice(headerIndex + 1);
 
   // Find matching bank format
   let format = BANK_FORMATS.find(f => f.detect(headers));

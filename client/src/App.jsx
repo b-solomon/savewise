@@ -7,6 +7,7 @@ import Portfolio from './components/Portfolio';
 import Budgets from './components/Budgets';
 import SavingsGoals from './components/SavingsGoals';
 import AiAdvisor from './components/AiAdvisor';
+import BankSync from './components/BankSync';
 import { X, Menu, Wallet } from 'lucide-react';
 
 export default function App() {
@@ -39,6 +40,11 @@ export default function App() {
     switch (tab) {
       case 'dashboard': return <Dashboard token={token} setActiveTab={setTab} />;
       case 'transactions': return <Transactions token={token} categories={categories} addToast={toast} />;
+      case 'sync': return (
+        <div className="flex-1 p-6 lg:p-8 overflow-y-auto max-h-screen">
+          <BankSync token={token} phoneUrl={phoneUrl} showToast={(msg, type) => toast({ id: Date.now(), type, title: type === 'success' ? 'Success' : 'Error', message: msg })} />
+        </div>
+      );
       case 'portfolio': return <Portfolio token={token} addToast={toast} />;
       case 'budgets': return <Budgets token={token} categories={categories} addToast={toast} />;
       case 'savings': return <SavingsGoals token={token} addToast={toast} />;

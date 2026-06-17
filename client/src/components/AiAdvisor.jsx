@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Sparkles, FileText } from 'lucide-react';
+import { Send, Sparkles, FileText, X } from 'lucide-react';
 const TIPS = ['Where can I cut spending?','Am I on track for my savings goals?','Analyze my spending this month','How can I save ₹5000 more?','Review my stock portfolio','Which budget am I exceeding?'];
 
 export default function AiAdvisor({ token }) {
@@ -53,7 +53,10 @@ export default function AiAdvisor({ token }) {
 
         {report && (
           <div className="glass rounded-2xl p-5 mb-3 animate-fade-up">
-            <h4 className="text-xs font-semibold text-white mb-2 flex items-center gap-2"><FileText className="h-3.5 w-3.5 text-accent" />Monthly Report — {report.month}</h4>
+            <div className="flex justify-between items-center mb-2">
+              <h4 className="text-xs font-semibold text-white flex items-center gap-2"><FileText className="h-3.5 w-3.5 text-accent" />Monthly Report — {report.month}</h4>
+              <button onClick={() => setReport(null)} className="p-1 rounded-lg text-gray-400 hover:text-white cursor-pointer hover:bg-white/5"><X className="h-3.5 w-3.5" /></button>
+            </div>
             {report.error ? <p className="text-expense text-xs">{report.error}</p> :
             <div className="text-xs text-gray-300 leading-relaxed" dangerouslySetInnerHTML={{__html:fmt(report.report||'')}} />}
             {report.savingsRate!=null && <div className="mt-3 text-[10px] text-gray-500">Savings Rate: {report.savingsRate}%</div>}

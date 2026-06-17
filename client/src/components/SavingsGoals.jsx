@@ -17,19 +17,52 @@ export default function SavingsGoals({ token, addToast }) {
 
   const create = async (e) => {
     e.preventDefault(); if(!name||!target) return;
-    const r = await fetch('/api/savings-goals',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({name,targetAmount:parseFloat(target),deadline:deadline||null,icon})});
-    const d = await r.json(); setGoals(p=>[d,...p]); setShow(false); setName(''); setTarget(''); setDeadline(''); setIcon('🎯');
-    addToast({id:Date.now(),type:'success',title:'Goal Created',message:`${icon} ${name}`});
+    try {
+      const r = await fetch('/api/savings-goals',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({name,targetAmount:parseFloat(target),deadline:deadline||null,icon})});
+      const d = await r.json();
+      if (r.ok && !d.error) {
+        setGoals(p=>[d,...p]); setShow(false); setName(''); setTarget(''); setDeadline(''); setIcon('🎯');
+        addToast({id:Date.now(),type:'success',title:'Goal Created',message:`${icon} ${name}`});
+      } else {
+        addToast({id:Date.now(),type:'error',title:'Failed',message:d.error || 'Failed to create goal'});
+      }
+    } catch(err) {
+      addToast({id:Date.now(),type:'error',title:'Error',message:err.message});
+    }
   };
 
   const contribute = async () => {
     if(!contAmt||parseFloat(contAmt)<=0) return;
-    const r = await fetch(`/api/savings-goals/${contId}/contribute`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({amount:parseFloat(contAmt)})});
-    const d = await r.json(); setGoals(p=>p.map(g=>g.id===contId?d:g)); setContId(null); setContAmt('');
-    addToast({id:Date.now(),type:'success',title:'Saved!',message:`₹${parseFloat(contAmt).toLocaleString('en-IN')} contributed`});
+    try {
+      const r = await fetch(`/api/savings-goals/${contId}/contribute`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({amount:parseFloat(contAmt)})});
+      const d = await r.json();
+      if (r.ok && !d.error) {
+        setGoals(p=>p.map(g=>g.id===contId?d:g));
+        addToast({id:Date.now(),type:'success',title:'Saved!',message:`₹${parseFloat(contAmt).toLocaleString('en-IN')} contributed`});
+      } else {
+        addToast({id:Date.now(),type:'error',title:'Failed',message:d.error || 'Failed to contribute'});
+      }
+    } catch(err) {
+      addToast({id:Date.now(),type:'error',title:'Error',message:err.message});
+    } finally {
+      setContId(null); setContAmt('');
+    }
   };
 
-  const del = async (id) => { await fetch(`/api/savings-goals/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}}); setGoals(p=>p.filter(g=>g.id!==id)); };
+  const del = async (id) => {
+    try {
+      const r = await fetch(`/api/savings-goals/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+      if (r.ok) {
+        setGoals(p=>p.filter(g=>g.id!==id));
+        addToast({id:Date.now(),type:'success',title:'Deleted',message:'Savings goal removed'});
+      } else {
+        const d = await r.json();
+        addToast({id:Date.now(),type:'error',title:'Failed',message:d.error || 'Failed to delete goal'});
+      }
+    } catch(err) {
+      addToast({id:Date.now(),type:'error',title:'Error',message:err.message});
+    }
+  };
 
   return (
     <div className="flex-1 p-6 lg:p-8 space-y-5 overflow-y-auto max-h-screen">
