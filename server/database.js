@@ -1,3 +1,4 @@
+import './loadEnv.js';
 import sqlite3 from 'sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -175,6 +176,8 @@ function initializeSqliteSchema() {
           [0,'Groceries','expense','🛒','#22c55e'],
           [0,'Insurance','expense','🛡️','#64748b'],
           [0,'EMI & Loans','expense','🏦','#dc2626'],
+          [0,'Church','expense','⛪','#6366f1'],
+          [0,'Stocks','expense','📈','#f59e0b'],
           [0,'Other','expense','📌','#6b7280'],
           [0,'Salary','income','💰','#10b981'],
           [0,'Freelance','income','💻','#22d3ee'],
@@ -186,6 +189,21 @@ function initializeSqliteSchema() {
         cats.forEach(c => stmt.run(c));
         stmt.finalize();
         console.log('SQLite: Default categories seeded.');
+      } else {
+        // Ensure Church category exists for existing SQLite database
+        sqliteDb.get("SELECT COUNT(*) as count FROM categories WHERE user_id = 0 AND name = 'Church'", (err2, row2) => {
+          if (!err2 && row2.count === 0) {
+            sqliteDb.run("INSERT INTO categories (user_id, name, type, icon, color) VALUES (0, 'Church', 'expense', '⛪', '#6366f1')");
+            console.log('SQLite: Seeded "Church" category.');
+          }
+        });
+        // Ensure Stocks category exists for existing SQLite database
+        sqliteDb.get("SELECT COUNT(*) as count FROM categories WHERE user_id = 0 AND name = 'Stocks'", (err3, row3) => {
+          if (!err3 && row3.count === 0) {
+            sqliteDb.run("INSERT INTO categories (user_id, name, type, icon, color) VALUES (0, 'Stocks', 'expense', '📈', '#f59e0b')");
+            console.log('SQLite: Seeded "Stocks" category.');
+          }
+        });
       }
     });
     console.log('SQLite Database schema initialized.');
@@ -295,6 +313,8 @@ async function initializePgSchema() {
         [0,'Groceries','expense','🛒','#22c55e'],
         [0,'Insurance','expense','🛡️','#64748b'],
         [0,'EMI & Loans','expense','🏦','#dc2626'],
+        [0,'Church','expense','⛪','#6366f1'],
+        [0,'Stocks','expense','📈','#f59e0b'],
         [0,'Other','expense','📌','#6b7280'],
         [0,'Salary','income','💰','#10b981'],
         [0,'Freelance','income','💻','#22d3ee'],
@@ -306,6 +326,19 @@ async function initializePgSchema() {
         await pgPool.query('INSERT INTO categories (user_id,name,type,icon,color) VALUES ($1,$2,$3,$4,$5)', c);
       }
       console.log('PostgreSQL: Default categories seeded.');
+    } else {
+      // Ensure Church category exists for existing PostgreSQL database
+      const churchCheck = await pgPool.query("SELECT COUNT(*) FROM categories WHERE user_id = 0 AND name = 'Church'");
+      if (parseInt(churchCheck.rows[0].count, 10) === 0) {
+        await pgPool.query("INSERT INTO categories (user_id, name, type, icon, color) VALUES (0, 'Church', 'expense', '⛪', '#6366f1')");
+        console.log('PostgreSQL: Seeded "Church" category.');
+      }
+      // Ensure Stocks category exists for existing PostgreSQL database
+      const stocksCheck = await pgPool.query("SELECT COUNT(*) FROM categories WHERE user_id = 0 AND name = 'Stocks'");
+      if (parseInt(stocksCheck.rows[0].count, 10) === 0) {
+        await pgPool.query("INSERT INTO categories (user_id, name, type, icon, color) VALUES (0, 'Stocks', 'expense', '📈', '#f59e0b')");
+        console.log('PostgreSQL: Seeded "Stocks" category.');
+      }
     }
     console.log('PostgreSQL Database schema initialized.');
   } catch (err) {

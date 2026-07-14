@@ -48,19 +48,32 @@ export default function Portfolio({ token, addToast }) {
     setSearchResults([]);
   };
 
+  const [submitting, setSubmitting] = useState(false);
+
   const handleAdd = async (e) => {
     e.preventDefault();
-    if (!symbol || !qty || !buyPrice) return;
+    if (!symbol || !qty || !buyPrice || submitting) return;
+    setSubmitting(true);
     try {
       const r = await fetch('/api/holdings', {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ symbol, name, exchange, quantity: parseFloat(qty), avgBuyPrice: parseFloat(buyPrice), buyDate: buyDate || undefined })
       });
-      if (!r.ok) throw new Error('Failed');
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.error || `Server error (${r.status})`);
+      }
       addToast({ id: Date.now(), type: 'success', title: 'Holding Added', message: `${symbol} × ${qty} @ ₹${buyPrice}` });
       setShowAdd(false); setSymbol(''); setName(''); setQty(''); setBuyPrice(''); setBuyDate('');
       fetchHoldings();
-    } catch (err) { addToast({ id: Date.now(), type: 'error', title: 'Error', message: err.message }); }
+    } catch (err) {
+      const msg = err.message === 'Failed to fetch'
+        ? 'Server is offline or waking up. Please wait 10-15 seconds and try again.'
+        : err.message;
+      addToast({ id: Date.now(), type: 'error', title: 'Connection Error', message: msg });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const handleDel = async (id, sym) => {
@@ -133,7 +146,10 @@ export default function Portfolio({ token, addToast }) {
             <div className="w-[120px]"><label className="block text-[10px] text-gray-500 mb-1">Buy Date</label><input type="date" value={buyDate} onChange={e => setBuyDate(e.target.value)} className="w-full glass-input rounded-lg px-2 py-2 text-xs" /></div>
           </div>
           <div className="flex gap-2">
-            <button type="submit" className="px-4 py-2 rounded-lg bg-savings text-white text-xs font-semibold cursor-pointer">Add</button>
+            <button type="submit" disabled={submitting} className="px-4 py-2 rounded-lg bg-savings text-white text-xs font-semibold cursor-pointer disabled:opacity-50 flex items-center gap-1">
+              {submitting && <RefreshCw className="h-3 w-3 animate-spin" />}
+              {submitting ? 'Adding...' : 'Add'}
+            </button>
             <button type="button" onClick={() => setShowAdd(false)} className="px-4 py-2 rounded-lg glass text-xs text-gray-400 cursor-pointer">Cancel</button>
           </div>
         </form>

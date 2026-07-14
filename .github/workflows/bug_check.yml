@@ -1,0 +1,42 @@
+name: Daily Bug Checker
+
+on:
+  schedule:
+    # Run every day at 18:30 UTC (which is exactly 00:00 IST / Midnight IST)
+    - cron: '30 18 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  check-bugs:
+    name: Run Diagnostics
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install Server Dependencies
+        run: |
+          cd server
+          npm ci
+
+      - name: Check JavaScript Syntax
+        run: |
+          cd server
+          node --check *.js
+
+      - name: Run Self-Diagnostic Tests
+        env:
+          PORT: 10000
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ENCRYPTION_SALT: ${{ secrets.ENCRYPTION_SALT }}
+        run: |
+          node server/scripts/bugCheck.js

@@ -49,9 +49,11 @@ const CATEGORY_MAP = [
   { kw: /bigbasket|blinkit|zepto|instamart|jiomart|grofers|dmart|more\s*retail|nature|basket|fresh/i, cat: 'Groceries' },
   { kw: /lic|insurance|hdfc\s*life|icici\s*pru|max\s*life|star\s*health|bajaj\s*allianz|sbi\s*life/i, cat: 'Insurance' },
   { kw: /emi|loan|ecs.*emi|bajaj\s*finserv|home\s*credit|zestmoney/i, cat: 'EMI & Loans' },
+  { kw: /church|tithe|offering|ministry|mission|temple|mosque|charity|donation|donated|donate/i, cat: 'Church' },
   { kw: /salary|payroll/i, cat: 'Salary' },
   { kw: /freelance|upwork|fiverr|client\s*payment|toptal/i, cat: 'Freelance' },
-  { kw: /dividend|interest|mutual\s*fund|stock|trading|zerodha|groww|upstox|angel|mf\s*redemption/i, cat: 'Investment' },
+  { kw: /dividend|interest|mf\s*redemption/i, cat: 'Investment' },
+  { kw: /mutual\s*fund|stock|trading|zerodha|groww|upstox|angel/i, cat: 'Stocks' },
   { kw: /refund|cashback|reversal/i, cat: 'Refund' },
 ];
 

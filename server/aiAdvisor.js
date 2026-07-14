@@ -54,6 +54,132 @@ async function buildContext(userId, month) {
   };
 }
 
+const tools = [
+  {
+    type: 'function',
+    function: {
+      name: 'add_holding',
+      description: 'Add a new stock holding to the user\'s investment portfolio when they say they bought a stock.',
+      parameters: {
+        type: 'object',
+        properties: {
+          symbol: { type: 'string', description: 'The stock symbol (e.g. RELIANCE, TRIDENT, TCS, AAPL).' },
+          quantity: { type: 'number', description: 'The number of shares purchased.' },
+          avgBuyPrice: { type: 'number', description: 'The average purchase price per share.' },
+          exchange: { type: 'string', enum: ['NSE', 'BSE', 'US'], description: 'The exchange. Defaults to NSE.' },
+          buyDate: { type: 'string', description: 'The purchase date in YYYY-MM-DD format. Defaults to today.' }
+        },
+        required: ['symbol', 'quantity', 'avgBuyPrice']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'add_transaction',
+      description: 'Add a new financial transaction (income or expense) to the database.',
+      parameters: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', enum: ['income', 'expense'], description: 'The transaction type.' },
+          amount: { type: 'number', description: 'The transaction amount.' },
+          category: { type: 'string', description: 'The category (e.g. Food & Dining, Shopping, Bills & Utilities, Church, Rent, etc.).' },
+          description: { type: 'string', description: 'Short description of the transaction.' },
+          merchant: { type: 'string', description: 'Merchant name or source.' },
+          date: { type: 'string', description: 'Transaction date in YYYY-MM-DD format. Defaults to today.' },
+          paymentMethod: { type: 'string', description: 'Payment method used (e.g. UPI, Cash, Credit Card, Debit Card).' }
+        },
+        required: ['type', 'amount', 'category']
+      }
+    }
+  }
+];
+
+async function executeToolCall(userId, tc) {
+  const funcName = tc.function.name;
+  let args;
+  try {
+    args = JSON.parse(tc.function.arguments);
+  } catch (err) {
+    console.error("Raw tool call arguments:", tc.function.arguments);
+    throw new Error(`Invalid JSON arguments from AI model: ${err.message}`);
+  }
+  console.log(`Executing tool call for user ${userId}: ${funcName}`, args);
+
+  if (funcName === 'add_holding') {
+    const sym = args.symbol.toUpperCase();
+    const name = `${sym} Stock`;
+    const date = args.buyDate || new Date().toISOString().split('T')[0];
+    const ex = args.exchange || 'NSE';
+    await query.run(
+      `INSERT INTO holdings (user_id, symbol, name, exchange, quantity, avg_buy_price, buy_date, asset_type, source) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [userId, sym, name, ex, args.quantity, args.avgBuyPrice, date, 'stock', 'manual']
+    );
+    return { success: true, message: `Successfully added ${args.quantity} shares of ${sym} at ₹${args.avgBuyPrice} to portfolio.` };
+  }
+
+  if (funcName === 'add_transaction') {
+    const date = args.date || new Date().toISOString().split('T')[0];
+    const method = args.paymentMethod || 'Other';
+    const desc = args.description || `${args.type === 'income' ? 'Received from' : 'Paid to'} ${args.merchant || args.category}`;
+    await query.run(
+      `INSERT INTO transactions (user_id, type, amount, category, description, merchant, date, payment_method, source) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [userId, args.type, args.amount, args.category, desc, args.merchant || '', date, method, 'manual']
+    );
+    return { success: true, message: `Successfully added transaction of ₹${args.amount} under ${args.category}.` };
+  }
+
+  return { error: 'Unknown function' };
+}
+
+async function callClientWithTools(client, modelName, chatMsgs, userId) {
+  const completion = await client.chat.completions.create({
+    model: modelName,
+    messages: chatMsgs,
+    tools,
+    tool_choice: 'auto',
+    max_tokens: 1000,
+    temperature: 0.7
+  });
+
+  const responseMsg = completion.choices[0].message;
+  if (responseMsg.tool_calls && responseMsg.tool_calls.length > 0) {
+    const updatedMessages = [...chatMsgs, responseMsg];
+
+    for (const tc of responseMsg.tool_calls) {
+      try {
+        const result = await executeToolCall(userId, tc);
+        updatedMessages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          name: tc.function.name,
+          content: JSON.stringify(result)
+        });
+      } catch (err) {
+        console.error('Error executing tool:', err.message);
+        updatedMessages.push({
+          role: 'tool',
+          tool_call_id: tc.id,
+          name: tc.function.name,
+          content: JSON.stringify({ error: err.message })
+        });
+      }
+    }
+
+    const finalCompletion = await client.chat.completions.create({
+      model: modelName,
+      messages: updatedMessages,
+      max_tokens: 1000,
+      temperature: 0.7
+    });
+    return finalCompletion.choices[0].message.content;
+  }
+
+  return responseMsg.content;
+}
+
 export async function handleAiChat(userId, messages) {
   const now = new Date();
   const month = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -70,6 +196,7 @@ Rules:
 - Mention budget violations if any
 - Comment on savings goal progress
 - If they have a portfolio, mention stock performance
+- You can add transactions or stock holdings to the user's database directly using the provided tools when they ask you to add them. When you successfully use a tool, confirm it to the user.
 - End with a brief disclaimer: "This is AI-generated guidance, not certified financial advice."`;
 
   let aiResponse = null;
@@ -79,8 +206,7 @@ Rules:
   if (openai) {
     try {
       const chatMsgs = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }))];
-      const completion = await openai.chat.completions.create({ model: 'gpt-4o-mini', messages: chatMsgs, max_tokens: 1000, temperature: 0.7 });
-      aiResponse = completion.choices[0].message.content;
+      aiResponse = await callClientWithTools(openai, 'gpt-4o-mini', chatMsgs, userId);
     } catch (err) { 
       console.error('OpenAI error, falling back to OpenRouter...', err.message); 
     }
@@ -92,15 +218,13 @@ Rules:
     if (openrouter) {
       const chatMsgs = [{ role: 'system', content: systemPrompt }, ...messages.map(m => ({ role: m.sender === 'user' ? 'user' : 'assistant', content: m.text }))];
       try {
-        const completion = await openrouter.chat.completions.create({ model: 'google/gemini-2.5-flash', messages: chatMsgs, max_tokens: 1000, temperature: 0.7 });
-        aiResponse = completion.choices[0].message.content;
+        aiResponse = await callClientWithTools(openrouter, 'openrouter/free', chatMsgs, userId);
       } catch (err) {
-        console.error('OpenRouter paid model error, trying free fallback:', err.message);
+        console.error('OpenRouter free model error, trying paid model fallback:', err.message);
         try {
-          const completion = await openrouter.chat.completions.create({ model: 'google/gemini-2.5-flash:free', messages: chatMsgs, max_tokens: 1000, temperature: 0.7 });
-          aiResponse = completion.choices[0].message.content;
-        } catch (freeErr) {
-          console.error('OpenRouter free model error:', freeErr.message);
+          aiResponse = await callClientWithTools(openrouter, 'google/gemini-2.5-flash', chatMsgs, userId);
+        } catch (paidErr) {
+          console.error('OpenRouter paid model fallback error:', paidErr.message);
         }
       }
     }
@@ -170,24 +294,24 @@ User data: ${JSON.stringify(ctx)}`;
       ];
       try {
         const completion = await openrouter.chat.completions.create({
-          model: 'google/gemini-2.5-flash',
+          model: 'openrouter/free',
           messages: messagesPayload,
           max_tokens: 1500
         });
         report = completion.choices[0].message.content;
         errorOccurred = false; // Reset error flag since OpenRouter succeeded
       } catch (err) {
-        console.error('OpenRouter paid model error during report generation, trying free fallback:', err.message);
+        console.error('OpenRouter free model error during report generation, trying paid model fallback:', err.message);
         try {
           const completion = await openrouter.chat.completions.create({
-            model: 'google/gemini-2.5-flash:free',
+            model: 'google/gemini-2.5-flash',
             messages: messagesPayload,
             max_tokens: 1500
           });
           report = completion.choices[0].message.content;
           errorOccurred = false; // Reset error flag since OpenRouter succeeded
-        } catch (freeErr) {
-          console.error('OpenRouter free model error during report generation:', freeErr.message);
+        } catch (paidErr) {
+          console.error('OpenRouter paid model fallback error during report generation:', paidErr.message);
           errorOccurred = true;
         }
       }
