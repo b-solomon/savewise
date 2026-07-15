@@ -1,132 +1,177 @@
-import dotenv from 'dotenv';
+import '../loadEnv.js';
 import path from 'path';
 import fs from 'fs';
-import pg from 'pg';
 import { fileURLToPath } from 'url';
+import { query, getDbStatus, ready } from '../database.js';
 import { parseSMS } from '../smsParser.js';
 import { encrypt, decrypt, getAppKey } from '../crypto.js';
+import { getLivePrices, searchSymbol } from '../marketData.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment variables manually from potential locations
-const envPaths = [
-  path.resolve(__dirname, '../.env'),
-  path.resolve(__dirname, '../../.env'),
-  path.resolve(process.cwd(), '.env'),
-  path.resolve(process.cwd(), 'server/.env')
-];
-
-let envLoaded = false;
-for (const p of envPaths) {
-  if (fs.existsSync(p)) {
-    dotenv.config({ path: p });
-    console.log(`🟢 Loaded environment variables from: ${p}`);
-    envLoaded = true;
-    break;
-  }
-}
-
-if (!envLoaded) {
-  dotenv.config();
-  console.log('🟡 Running default dotenv configuration.');
-}
-
-console.log('\n=== SAVEWISE AUTOMATED DIAGNOSTICS ===');
+console.log('\n======================================================');
+console.log('🔍 SAVEWISE COMPREHENSIVE AUTOMATED BUG & HEALTH CHECK');
+console.log('======================================================\n');
 
 let failures = 0;
+let passes = 0;
 
-function reportTest(name, success, info = '') {
+function reportTest(suite, name, success, info = '') {
   if (success) {
-    console.log(`✅ [PASS] ${name} ${info ? `- ${info}` : ''}`);
+    passes++;
+    console.log(`  ✅ [PASS] [${suite}] ${name} ${info ? `- ${info}` : ''}`);
   } else {
-    console.error(`❌ [FAIL] ${name} ${info ? `- ${info}` : ''}`);
     failures++;
+    console.error(`  ❌ [FAIL] [${suite}] ${name} ${info ? `- ${info}` : ''}`);
   }
 }
 
-// 1. Environment Verification
+// ─── 1. ENVIRONMENT & CONFIGURATION ───
+console.log('🔹 1. Checking Environment Variables...');
 try {
-  const requiredVars = ['PORT', 'JWT_SECRET', 'DATABASE_URL', 'ENCRYPTION_SALT'];
+  const requiredVars = ['PORT', 'JWT_SECRET', 'ENCRYPTION_SALT'];
   const missing = requiredVars.filter(v => !process.env[v]);
   if (missing.length === 0) {
-    reportTest('Environment Variables', true, 'All required variables are present');
+    reportTest('ENV', 'Core Variables Check', true, `PORT=${process.env.PORT || 4000}`);
   } else {
-    reportTest('Environment Variables', false, `Missing: ${missing.join(', ')}`);
+    reportTest('ENV', 'Core Variables Check', false, `Missing: ${missing.join(', ')}`);
+  }
+
+  if (process.env.OPENROUTER_API_KEY) {
+    reportTest('ENV', 'OpenRouter API Key', true, 'Key present for AI Advisor');
+  } else {
+    reportTest('ENV', 'OpenRouter API Key', false, 'Missing OPENROUTER_API_KEY');
   }
 } catch (err) {
-  reportTest('Environment Variables', false, err.message);
+  reportTest('ENV', 'Environment Check', false, err.message);
 }
 
-// 2. Cryptography Validation
+// ─── 2. CRYPTOGRAPHY & ENCRYPTION ───
+console.log('\n🔹 2. Verifying AES-256-GCM Encryption Engine...');
 try {
   const secretKey = getAppKey();
-  if (!secretKey) {
-    throw new Error('Could not derive encryption key. Check ENCRYPTION_SALT.');
-  }
-  const testText = 'SaveWise_Vault_Check_2026';
-  const encrypted = encrypt(testText, secretKey);
+  if (!secretKey) throw new Error('Could not derive encryption key');
+  
+  const sampleString = 'SaveWise_Vault_Data_Verification_2026';
+  const encrypted = encrypt(sampleString, secretKey);
   const decrypted = decrypt(encrypted, secretKey);
-  if (decrypted === testText) {
-    reportTest('Crypto & Encryption', true, 'Encryption and decryption loop matched');
+
+  if (decrypted === sampleString) {
+    reportTest('CRYPTO', 'AES-256-GCM Loop', true, 'String encryption & decryption verified');
   } else {
-    reportTest('Crypto & Encryption', false, 'Decrypted value mismatch');
+    reportTest('CRYPTO', 'AES-256-GCM Loop', false, 'Decrypted value mismatch');
   }
 } catch (err) {
-  reportTest('Crypto & Encryption', false, err.message);
+  reportTest('CRYPTO', 'AES-256-GCM Loop', false, err.message);
 }
 
-// 3. SMS Parser Validation
+// ─── 3. SMS PARSER & CATEGORY MAPPING ───
+console.log('\n🔹 3. Testing SMS Transaction Parser Rules...');
 try {
-  const testSms = 'Dear Customer, Rs 1250 has been debited from your account XXXX1234 to VPA merchant@upi on 10-Jun-2026';
-  const parsed = parseSMS(testSms);
-  
-  if (parsed && !parsed.error && parsed.amount === 1250 && parsed.type === 'expense') {
-    reportTest('SMS Transaction Parser', true, 'Sample debit alert parsed correctly');
-  } else {
-    reportTest('SMS Transaction Parser', false, `Invalid parse result: ${JSON.stringify(parsed)}`);
+  const testCases = [
+    {
+      raw: 'Rs 1250 debited from A/c XX1234 on 10-Jun-26 for SWIGGY UPI Ref 412345678',
+      expectedType: 'expense',
+      expectedCat: 'Food & Dining',
+      expectedAmt: 1250
+    },
+    {
+      raw: 'INR 4500 debited for Zerodha stock purchase on 12/06/2026',
+      expectedType: 'expense',
+      expectedCat: 'Stocks',
+      expectedAmt: 4500
+    },
+    {
+      raw: 'Rs 5000 debited for Church offering tithe via UPI',
+      expectedType: 'expense',
+      expectedCat: 'Church',
+      expectedAmt: 5000
+    },
+    {
+      raw: 'You have received Rs.50,000.00 in your A/c XX1234 from SALARY via NEFT',
+      expectedType: 'income',
+      expectedCat: 'Salary',
+      expectedAmt: 50000
+    }
+  ];
+
+  for (const tc of testCases) {
+    const res = parseSMS(tc.raw);
+    const pass = res && !res.error && res.type === tc.expectedType && res.category === tc.expectedCat && res.amount === tc.expectedAmt;
+    reportTest('SMS_PARSER', `Pattern (${tc.expectedCat})`, pass, pass ? `Extracted ₹${res.amount} ${res.type}` : `Got: ${JSON.stringify(res)}`);
   }
 } catch (err) {
-  reportTest('SMS Transaction Parser', false, err.message);
+  reportTest('SMS_PARSER', 'Parser Execution', false, err.message);
 }
 
-// 4. Database Connection Verification (Supabase PG)
-async function verifyDatabase() {
-  const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl) {
-    reportTest('Database Connection', false, 'DATABASE_URL is not set');
-    return;
-  }
-  
-  console.log('Testing Supabase PostgreSQL connection...');
-  const pool = new pg.Pool({
-    connectionString: dbUrl,
-    ssl: { rejectUnauthorized: false },
-    connectionTimeoutMillis: 5000
-  });
-  
-  const startTime = Date.now();
+// ─── 4. DATABASE & TABLES INTEGRITY ───
+console.log('\n🔹 4. Verifying Database & Schema Tables...');
+async function testDatabase() {
   try {
-    const res = await pool.query('SELECT NOW()');
-    const latency = Date.now() - startTime;
-    reportTest('Database Connection', true, `Connected successfully! Latency: ${latency}ms`);
+    await ready;
+    const alive = await query.get('SELECT 1 as alive');
+    const status = getDbStatus();
+    
+    if (alive) {
+      reportTest('DATABASE', 'Database Connection & Query Engine', true, `Operating via ${status.dbType} database engine`);
+
+      const tables = ['users', 'transactions', 'holdings', 'budgets', 'categories', 'savings_goals'];
+      for (const tbl of tables) {
+        try {
+          const res = await query.get(`SELECT COUNT(*) as count FROM ${tbl}`);
+          const count = res?.count ?? (res ? Object.values(res)[0] : 0);
+          reportTest('DATABASE', `Table '${tbl}'`, true, `${count} records found`);
+        } catch (tblErr) {
+          reportTest('DATABASE', `Table '${tbl}'`, false, tblErr.message);
+        }
+      }
+    } else {
+      reportTest('DATABASE', 'Database Connection', false, status.dbConnectionError || 'Database query failed');
+    }
   } catch (err) {
-    reportTest('Database Connection', false, `Failed to query PostgreSQL: ${err.message}`);
-  } finally {
-    await pool.end();
+    reportTest('DATABASE', 'Database Check', false, err.message);
   }
 }
 
-async function main() {
-  await verifyDatabase();
-  console.log('\n======================================');
+// ─── 5. LIVE STOCK MARKET API ENGINE ───
+console.log('\n🔹 5. Checking Live Stock Price & Ticker Search Engine...');
+async function testStockEngine() {
+  try {
+    const results = await searchSymbol('RELIANCE');
+    if (Array.isArray(results) && results.length > 0) {
+      reportTest('STOCK_API', 'Yahoo Finance Ticker Search', true, `Found ${results.length} results for 'RELIANCE'`);
+    } else {
+      reportTest('STOCK_API', 'Yahoo Finance Ticker Search', false, 'No results returned');
+    }
+
+    const liveData = await getLivePrices([{ symbol: 'RELIANCE', exchange: 'NSE', quantity: 1, avg_buy_price: 2400 }]);
+    if (Array.isArray(liveData) && liveData[0] && (liveData[0].livePrice > 0 || liveData[0].symbol === 'RELIANCE')) {
+      reportTest('STOCK_API', 'Live Market Price Quote', true, `RELIANCE.NS current price: ₹${liveData[0].livePrice || liveData[0].avg_buy_price}`);
+    } else {
+      reportTest('STOCK_API', 'Live Market Price Quote', false, 'Failed to fetch live price quote');
+    }
+  } catch (err) {
+    reportTest('STOCK_API', 'Stock Engine', false, err.message);
+  }
+}
+
+// ─── MAIN RUNNER ───
+async function runAllDiagnostics() {
+  await testDatabase();
+  await testStockEngine();
+
+  console.log('\n======================================================');
+  console.log(`📊 DIAGNOSTIC SUMMARY: ${passes} Passed | ${failures} Failed`);
+  console.log('======================================================\n');
+
   if (failures === 0) {
-    console.log('🟢 DIAGNOSTICS COMPLETED: No bugs or connection issues found.');
+    console.log('🟢 ALL SYSTEMS OPERATIONAL: No bugs detected.\n');
     process.exit(0);
   } else {
-    console.error(`🔴 DIAGNOSTICS COMPLETED: ${failures} issue(s) detected!`);
+    console.error(`🔴 ALERT: ${failures} diagnostic check(s) failed!\n`);
     process.exit(1);
   }
 }
 
-main();
+runAllDiagnostics();

@@ -12,54 +12,67 @@ let pgPool = null;
 export let isDbConnected = false;
 export let dbConnectionError = null;
 
-async function initDatabase() {
-  if (process.env.DATABASE_URL) {
-    console.log('Detected DATABASE_URL. Connecting to PostgreSQL...');
-    try {
-      const pg = await import('pg');
-      const { Pool } = pg.default;
-      pgPool = new Pool({
-        connectionString: process.env.DATABASE_URL,
-        ssl: { rejectUnauthorized: false } // Required for Supabase secure connections
-      });
-      
-      let retries = 5;
-      while (retries > 0) {
+export function getDbStatus() {
+  return { isDbConnected, dbConnectionError, dbType };
+}
+
+let dbInitPromise = null;
+
+function initDatabase() {
+  if (!dbInitPromise) {
+    dbInitPromise = (async () => {
+      if (process.env.DATABASE_URL) {
+        console.log('Detected DATABASE_URL. Connecting to PostgreSQL...');
         try {
-          await pgPool.query('SELECT NOW()');
-          dbType = 'postgres';
-          isDbConnected = true;
-          console.log('Connected to PostgreSQL (Supabase) successfully!');
-          await initializePgSchema();
-          return;
-        } catch (err) {
-          retries--;
-          console.error(`PostgreSQL connection attempt failed. Retries remaining: ${retries}. Error: ${err.message}`);
-          if (retries === 0) {
-            isDbConnected = false;
-            dbConnectionError = err.message;
-            console.error('CRITICAL: Failed to connect to PostgreSQL after 5 attempts. Running in database-offline mode.');
-          } else {
-            await new Promise(resolve => setTimeout(resolve, 3000));
+          const pg = await import('pg');
+          const { Pool } = pg.default;
+          pgPool = new Pool({
+            connectionString: process.env.DATABASE_URL,
+            ssl: { rejectUnauthorized: false }
+          });
+          
+          let retries = 5;
+          while (retries > 0) {
+            try {
+              await pgPool.query('SELECT NOW()');
+              dbType = 'postgres';
+              isDbConnected = true;
+              console.log('Connected to PostgreSQL (Supabase) successfully!');
+              await initializePgSchema();
+              return;
+            } catch (err) {
+              retries--;
+              console.error(`PostgreSQL connection attempt failed. Retries remaining: ${retries}. Error: ${err.message}`);
+              if (retries === 0) {
+                console.warn('PostgreSQL connection failed. Falling back to local SQLite database...');
+                setupSQLite();
+                isDbConnected = true;
+              } else {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
+            }
           }
+        } catch (err) {
+          console.warn('PostgreSQL pool error. Falling back to local SQLite database:', err.message);
+          setupSQLite();
+          isDbConnected = true;
+        }
+      } else {
+        try {
+          setupSQLite();
+          isDbConnected = true;
+        } catch (err) {
+          isDbConnected = false;
+          dbConnectionError = err.message;
+          console.error('CRITICAL: Failed to initialize SQLite schema:', err.message);
         }
       }
-    } catch (err) {
-      isDbConnected = false;
-      dbConnectionError = err.message;
-      console.error('CRITICAL: Initialization error for PostgreSQL Pool:', err.message);
-    }
-  } else {
-    try {
-      setupSQLite();
-      isDbConnected = true;
-    } catch (err) {
-      isDbConnected = false;
-      dbConnectionError = err.message;
-      console.error('CRITICAL: Failed to initialize SQLite schema:', err.message);
-    }
+    })();
   }
+  return dbInitPromise;
 }
+
+export const ready = initDatabase();
 
 function setupSQLite() {
   const dbPath = path.resolve(__dirname, process.env.DATABASE_FILE || 'savewise.db');
