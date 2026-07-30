@@ -6,6 +6,7 @@ import { query, getDbStatus, ready } from '../database.js';
 import { parseSMS } from '../smsParser.js';
 import { encrypt, decrypt, getAppKey } from '../crypto.js';
 import { getLivePrices, searchSymbol } from '../marketData.js';
+import { validatePassword, evaluatePasswordStrength } from '../passwordValidator.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -156,10 +157,43 @@ async function testStockEngine() {
   }
 }
 
+// ─── 6. PASSWORD VALIDATION & STRENGTH ENGINE ───
+console.log('\n🔹 6. Verifying Password Complexity & Strength Engine...');
+function testPasswordEngine() {
+  try {
+    const weakCases = [
+      '12345',
+      'password',
+      'PASSWORD123',
+      'WeakPass1',
+    ];
+    for (const pw of weakCases) {
+      const val = validatePassword(pw);
+      const str = evaluatePasswordStrength(pw);
+      const pass = !val.valid && (str.label === 'Weak' || str.label === 'Normal');
+      reportTest('PASSWORD_ENGINE', `Reject Weak ('${pw}')`, pass, pass ? `Rejected correctly` : `Unexpectedly accepted!`);
+    }
+
+    const strongCases = [
+      'SaveWise@2026!',
+      'P@ssw0rd#Secure99'
+    ];
+    for (const pw of strongCases) {
+      const val = validatePassword(pw);
+      const str = evaluatePasswordStrength(pw);
+      const pass = val.valid && (str.label === 'Strong' || str.label === 'Very Strong');
+      reportTest('PASSWORD_ENGINE', `Accept Strong ('${pw}')`, pass, pass ? `Strength: ${str.label} (${str.percent}%)` : `Validation failed: ${val.error}`);
+    }
+  } catch (err) {
+    reportTest('PASSWORD_ENGINE', 'Password Check Execution', false, err.message);
+  }
+}
+
 // ─── MAIN RUNNER ───
 async function runAllDiagnostics() {
   await testDatabase();
   await testStockEngine();
+  testPasswordEngine();
 
   console.log('\n======================================================');
   console.log(`📊 DIAGNOSTIC SUMMARY: ${passes} Passed | ${failures} Failed`);

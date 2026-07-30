@@ -99,18 +99,29 @@ export async function getLivePrices(holdings) {
  * Search for a stock symbol
  */
 export async function searchSymbol(query) {
-  try {
-    const url = `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=8&newsCount=0`;
-    const res = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
-    });
-    if (!res.ok) return [];
-    const json = await res.json();
-    return (json.quotes || []).map(q => ({
-      symbol: q.symbol,
-      name: q.shortname || q.longname || q.symbol,
-      exchange: q.exchange,
-      type: q.quoteType
-    }));
-  } catch { return []; }
+  const endpoints = [
+    `https://query2.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=8&newsCount=0`,
+    `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=8&newsCount=0`
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
+      });
+      if (res.ok) {
+        const json = await res.json();
+        const quotes = json.quotes || [];
+        if (quotes.length > 0) {
+          return quotes.map(q => ({
+            symbol: q.symbol,
+            name: q.shortname || q.longname || q.symbol,
+            exchange: q.exchange,
+            type: q.quoteType
+          }));
+        }
+      }
+    } catch { /* try next endpoint */ }
+  }
+  return [];
 }

@@ -11,6 +11,7 @@ import { importCSV } from './csvImporter.js';
 import { getLivePrices, searchSymbol } from './marketData.js';
 import { handleAiChat, generateMonthlyReport } from './aiAdvisor.js';
 import { getAppKey, encrypt, decrypt } from './crypto.js';
+import { validatePassword } from './passwordValidator.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -34,6 +35,10 @@ const auth = (req, res, next) => {
 app.post('/api/auth/register', async (req, res) => {
   const { email, password, name } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+
+  const val = validatePassword(password);
+  if (!val.valid) return res.status(400).json({ error: val.error });
+
   try {
     const exists = await query.get('SELECT id FROM users WHERE email = ?', [email]);
     if (exists) return res.status(400).json({ error: 'Email already registered' });
