@@ -50,7 +50,7 @@ async function initDatabase() {
     }
   } else {
     try {
-      setupSQLite();
+      await setupSQLite();
       isDbConnected = true;
     } catch (err) {
       isDbConnected = false;
@@ -62,14 +62,19 @@ async function initDatabase() {
 
 function setupSQLite() {
   const dbPath = path.resolve(__dirname, process.env.DATABASE_FILE || 'savewise.db');
-  sqliteDb = new sqlite3.Database(dbPath, (err) => {
-    if (err) console.error('SQLite DB connection error:', err.message);
-    else {
+  dbType = 'sqlite';
+  return new Promise((resolve, reject) => {
+    sqliteDb = new sqlite3.Database(dbPath, (err) => {
+      if (err) {
+        console.error('SQLite DB connection error:', err.message);
+        reject(err);
+        return;
+      }
       console.log('Connected to SQLite:', dbPath);
       initializeSqliteSchema();
-    }
+      resolve();
+    });
   });
-  dbType = 'sqlite';
 }
 
 // SQLite Schema

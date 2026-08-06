@@ -79,7 +79,11 @@ let appKey = null;
 
 export function getAppKey() {
   if (!appKey) {
-    appKey = deriveKey(process.env.JWT_SECRET || 'fallback_secret', process.env.ENCRYPTION_SALT);
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      throw new Error('JWT_SECRET environment variable is required for encryption key derivation');
+    }
+    appKey = deriveKey(jwtSecret, process.env.ENCRYPTION_SALT);
   }
   return appKey;
 }

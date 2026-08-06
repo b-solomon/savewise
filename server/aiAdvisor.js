@@ -49,7 +49,12 @@ async function buildContext(userId, month) {
     month, totalIncome: Math.round(totalIncome), totalExpenses: Math.round(totalExpenses),
     balance: Math.round(totalIncome - totalExpenses),
     topSpending: Object.entries(catSpend).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([c, v]) => ({ category: c, spent: Math.round(v) })),
-    budgets: budgets.map(b => ({ category: b.category, limit: b.monthly_limit, spent: Math.round(catSpend[b.category] || 0), pct: Math.round(((catSpend[b.category] || 0) / b.monthly_limit) * 100) })),
+    budgets: budgets.map(b => {
+      const limit = parseFloat(b.monthly_limit);
+      const spent = Math.round(catSpend[b.category] || 0);
+      const pct = limit > 0 ? Math.round((spent / limit) * 100) : 0;
+      return { category: b.category, limit, spent, pct };
+    }),
     savingsGoals: goals, portfolio: holdings, txnCount: txns.length
   };
 }

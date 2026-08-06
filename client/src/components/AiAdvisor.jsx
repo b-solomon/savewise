@@ -44,9 +44,23 @@ export default function AiAdvisor({ token, user }) {
     finally { setLoading(false); }
   };
 
-  const fmt = (t) => {
-    if (!t) return '';
-    return t.replace(/\*\*(.*?)\*\*/g,'<strong class="text-white">$1</strong>').replace(/\n- /g,'\n• ').replace(/\n/g,'<br/>');
+  const renderFormattedText = (text) => {
+    if (!text) return null;
+    const normalized = text.replace(/\n- /g, '\n• ');
+    const lines = normalized.split('\n');
+    return lines.map((line, lineIndex) => {
+      const parts = line.split(/\*\*(.*?)\*\*/g);
+      return (
+        <span key={lineIndex}>
+          {parts.map((part, partIndex) => (
+            partIndex % 2 === 1
+              ? <strong key={partIndex} className="text-white">{part}</strong>
+              : <span key={partIndex}>{part}</span>
+          ))}
+          {lineIndex < lines.length - 1 ? <br /> : null}
+        </span>
+      );
+    });
   };
 
   return (
@@ -82,7 +96,7 @@ export default function AiAdvisor({ token, user }) {
               <button onClick={() => setReport(null)} className="p-1 rounded-lg text-gray-400 hover:text-white cursor-pointer hover:bg-white/5"><X className="h-3.5 w-3.5" /></button>
             </div>
             {report.error ? <p className="text-expense text-xs">{report.error}</p> :
-            <div className="text-xs text-gray-300 leading-relaxed" dangerouslySetInnerHTML={{__html:fmt(report.report||'')}} />}
+            <div className="text-xs text-gray-300 leading-relaxed">{renderFormattedText(report.report || '')}</div>}
             {report.savingsRate!=null && <div className="mt-3 text-[10px] text-gray-500">Savings Rate: {report.savingsRate}%</div>}
           </div>
         )}
@@ -90,7 +104,7 @@ export default function AiAdvisor({ token, user }) {
         {msgs.map((m,i)=>(
           <div key={i} className={`flex ${m.sender==='user'?'justify-end':'justify-start'}`}>
             <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs leading-relaxed ${m.sender==='user'?'bg-savings/12 text-white rounded-br-md':'glass text-gray-300 rounded-bl-md'}`}>
-              {m.sender==='user' ? m.text : <span dangerouslySetInnerHTML={{__html:fmt(m.text)}} />}
+              {m.sender==='user' ? m.text : renderFormattedText(m.text)}
             </div>
           </div>
         ))}

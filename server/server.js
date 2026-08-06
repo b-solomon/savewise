@@ -14,7 +14,10 @@ import { getAppKey, encrypt, decrypt } from './crypto.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
-const JWT_SECRET = process.env.JWT_SECRET || 'savewise_secret';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is required');
+}
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 app.use(cors());
@@ -230,8 +233,10 @@ app.get('/api/dashboard/summary', auth, async (req, res) => {
     const categoryBreakdown = Object.entries(catTotals).map(([cat, total]) => {
       const info = catLookup[cat] || {};
       const budget = budgets.find(b => b.category === cat);
+      const budgetLimit = budget ? parseFloat(budget.monthly_limit) : null;
+      const budgetPercent = budgetLimit && budgetLimit > 0 ? Math.round(total / budgetLimit * 100) : null;
       return { category: cat, total: Math.round(total * 100) / 100, icon: info.icon || '📌', color: info.color || '#6b7280',
-        budget: budget?.monthly_limit || null, budgetPercent: budget ? Math.round(total / budget.monthly_limit * 100) : null };
+        budget: budgetLimit && budgetLimit > 0 ? budgetLimit : null, budgetPercent };
     }).sort((a, b) => b.total - a.total);
 
     // Portfolio summary
@@ -295,9 +300,12 @@ app.get('/api/budgets', auth, async (req, res) => {
 
 app.post('/api/budgets', auth, async (req, res) => {
   const { category, monthlyLimit } = req.body;
-  if (!category || !monthlyLimit) return res.status(400).json({ error: 'Category and limit required' });
+  const parsedLimit = parseFloat(monthlyLimit);
+  if (!category || !Number.isFinite(parsedLimit) || parsedLimit <= 0) {
+    return res.status(400).json({ error: 'Category and limit must be valid and greater than zero' });
+  }
   try {
-    await query.run('INSERT OR REPLACE INTO budgets (user_id,category,monthly_limit) VALUES (?,?,?)', [req.user.id, category, parseFloat(monthlyLimit)]);
+    await query.run('INSERT OR REPLACE INTO budgets (user_id,category,monthly_limit) VALUES (?,?,?)', [req.user.id, category, parsedLimit]);
     res.status(201).json({ message: 'Budget set' });
   } catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
@@ -324,10 +332,13 @@ app.post('/api/savings-goals', auth, async (req, res) => {
 
 app.put('/api/savings-goals/:id/contribute', auth, async (req, res) => {
   const { amount } = req.body;
-  if (!amount || amount <= 0) return res.status(400).json({ error: 'Valid amount required' });
+  const parsedAmount = parseFloat(amount);
+  const goalId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) return res.status(400).json({ error: 'Valid amount required' });
   try {
-    await query.run('UPDATE savings_goals SET current_amount=current_amount+? WHERE id=? AND user_id=?', [parseFloat(amount), parseInt(req.params.id, 10), req.user.id]);
-    res.json(await query.get('SELECT * FROM savings_goals WHERE id=?', [parseInt(req.params.id, 10)]));
+    const result = await query.run('UPDATE savings_goals SET current_amount=current_amount+? WHERE id=? AND user_id=?', [parsedAmount, goalId, req.user.id]);
+    if (!result.changes) return res.status(404).json({ error: 'Savings goal not found' });
+    res.json(await query.get('SELECT * FROM savings_goals WHERE id=? AND user_id=?', [goalId, req.user.id]));
   } catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
 
