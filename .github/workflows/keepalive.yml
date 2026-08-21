@@ -1,0 +1,22 @@
+name: Keep Supabase Alive
+
+on:
+  schedule:
+    # Runs at 00:00 every Monday and Thursday
+    - cron: '0 0 * * 1,4'
+  workflow_dispatch: # Allows you to manually trigger the workflow from GitHub Actions tab
+
+jobs:
+  ping-database:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase Database
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "DATABASE_URL secret is not set!"
+            exit 1
+          fi
+          # Uses psql to run a simple 'SELECT 1' query to simulate activity
+          psql "$DATABASE_URL" -c "SELECT 1;"
