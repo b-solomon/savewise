@@ -389,9 +389,10 @@ function translateSql(sql) {
 initDatabase();
 
 export const query = {
-  run(sql, params = []) {
+  async run(sql, params = []) {
+    await ready;
     if (!isDbConnected) {
-      return Promise.reject(new Error(`Database connection is offline. Error: ${dbConnectionError || 'No connection string'}`));
+      return Promise.reject(new Error(`Database connection is offline. Error: ${dbConnectionError || 'Database not initialized'}`));
     }
     if (dbType === 'postgres') {
       const tSql = translateSql(sql);
@@ -408,9 +409,10 @@ export const query = {
       });
     }
   },
-  get(sql, params = []) {
+  async get(sql, params = []) {
+    await ready;
     if (!isDbConnected) {
-      return Promise.reject(new Error(`Database connection is offline. Error: ${dbConnectionError || 'No connection string'}`));
+      return Promise.reject(new Error(`Database connection is offline. Error: ${dbConnectionError || 'Database not initialized'}`));
     }
     if (dbType === 'postgres') {
       const tSql = translateSql(sql);
@@ -424,9 +426,10 @@ export const query = {
       });
     }
   },
-  all(sql, params = []) {
+  async all(sql, params = []) {
+    await ready;
     if (!isDbConnected) {
-      return Promise.reject(new Error(`Database connection is offline. Error: ${dbConnectionError || 'No connection string'}`));
+      return Promise.reject(new Error(`Database connection is offline. Error: ${dbConnectionError || 'Database not initialized'}`));
     }
     if (dbType === 'postgres') {
       const tSql = translateSql(sql);
