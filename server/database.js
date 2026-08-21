@@ -23,44 +23,56 @@ function initDatabase() {
     dbInitPromise = (async () => {
       if (process.env.DATABASE_URL) {
         console.log('Detected DATABASE_URL. Connecting to PostgreSQL...');
-        try {
-          const pg = await import('pg');
-          const { Pool } = pg.default;
-          pgPool = new Pool({
-            connectionString: process.env.DATABASE_URL,
-            ssl: { rejectUnauthorized: false }
-          });
-          
-          let retries = 5;
-          while (retries > 0) {
-            try {
-              await pgPool.query('SELECT NOW()');
-              dbType = 'postgres';
-              isDbConnected = true;
-              console.log('Connected to PostgreSQL (Supabase) successfully!');
-              await initializePgSchema();
-              return;
-            } catch (err) {
-              retries--;
-              console.error(`PostgreSQL connection attempt failed. Retries remaining: ${retries}. Error: ${err.message}`);
-              if (retries === 0) {
-                console.warn('PostgreSQL connection failed. Falling back to local SQLite database...');
-                setupSQLite();
-                isDbConnected = true;
-              } else {
-                await new Promise(resolve => setTimeout(resolve, 1000));
+        let currentUrl = process.env.DATABASE_URL;
+        
+        let retries = 5;
+        while (retries > 0) {
+          try {
+            const pg = await import('pg');
+            const { Pool } = pg.default;
+            if (pgPool) { try { await pgPool.end(); } catch {} }
+            
+            pgPool = new Pool({
+              connectionString: currentUrl,
+              ssl: { rejectUnauthorized: false },
+              connectionTimeoutMillis: 5000
+            });
+
+            await pgPool.query('SELECT NOW()');
+            dbType = 'postgres';
+            isDbConnected = true;
+            dbConnectionError = null;
+            console.log('Connected to PostgreSQL (Supabase) successfully!');
+            await initializePgSchema();
+            return;
+          } catch (err) {
+            retries--;
+            dbConnectionError = err.message;
+            console.error(`PostgreSQL connection attempt failed. Retries remaining: ${retries}. Error: ${err.message}`);
+            
+            // Auto-switch between pooler port 6543 and session/direct port 5432 on EAUTHQUERY error
+            if (err.message.includes('EAUTHQUERY') || err.message.includes('connection to database not available')) {
+              if (currentUrl.includes(':6543')) {
+                console.log('🔄 PgBouncer pooler port 6543 failed. Trying direct/session port 5432...');
+                currentUrl = currentUrl.replace(':6543', ':5432');
               }
             }
+
+            if (retries === 0) {
+              console.warn('PostgreSQL connection failed. Falling back to local SQLite database...');
+              try {
+                await setupSQLite();
+              } catch (sqErr) {
+                console.error('CRITICAL: SQLite fallback failed:', sqErr.message);
+              }
+            } else {
+              await new Promise(resolve => setTimeout(resolve, 1000));
+            }
           }
-        } catch (err) {
-          console.warn('PostgreSQL pool error. Falling back to local SQLite database:', err.message);
-          setupSQLite();
-          isDbConnected = true;
         }
       } else {
         try {
-          setupSQLite();
-          isDbConnected = true;
+          await setupSQLite();
         } catch (err) {
           isDbConnected = false;
           dbConnectionError = err.message;
@@ -75,15 +87,24 @@ function initDatabase() {
 export const ready = initDatabase();
 
 function setupSQLite() {
-  const dbPath = path.resolve(__dirname, process.env.DATABASE_FILE || 'savewise.db');
-  sqliteDb = new sqlite3.Database(dbPath, (err) => {
-    if (err) console.error('SQLite DB connection error:', err.message);
-    else {
-      console.log('Connected to SQLite:', dbPath);
-      initializeSqliteSchema();
-    }
+  return new Promise((resolve, reject) => {
+    const dbPath = path.resolve(__dirname, process.env.DATABASE_FILE || 'savewise.db');
+    sqliteDb = new sqlite3.Database(dbPath, (err) => {
+      if (err) {
+        console.error('SQLite DB connection error:', err.message);
+        isDbConnected = false;
+        dbConnectionError = err.message;
+        reject(err);
+      } else {
+        console.log('Connected to SQLite:', dbPath);
+        dbType = 'sqlite';
+        isDbConnected = true;
+        dbConnectionError = null;
+        initializeSqliteSchema();
+        resolve();
+      }
+    });
   });
-  dbType = 'sqlite';
 }
 
 // SQLite Schema
