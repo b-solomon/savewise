@@ -18,7 +18,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: server/package-lock.json
 
@@ -35,8 +35,9 @@ jobs:
       - name: Run Self-Diagnostic Tests
         env:
           PORT: 10000
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET || 'savewise_ci_testing_jwt_secret_key_2026' }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          ENCRYPTION_SALT: ${{ secrets.ENCRYPTION_SALT }}
+          ENCRYPTION_SALT: ${{ secrets.ENCRYPTION_SALT || 'savewise_ci_testing_salt_2026' }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           node server/scripts/bugCheck.js

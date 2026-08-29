@@ -89,7 +89,7 @@ export const ready = initDatabase();
 function setupSQLite() {
   return new Promise((resolve, reject) => {
     const dbPath = path.resolve(__dirname, process.env.DATABASE_FILE || 'savewise.db');
-    sqliteDb = new sqlite3.Database(dbPath, (err) => {
+    sqliteDb = new sqlite3.Database(dbPath, async (err) => {
       if (err) {
         console.error('SQLite DB connection error:', err.message);
         isDbConnected = false;
@@ -100,8 +100,15 @@ function setupSQLite() {
         dbType = 'sqlite';
         isDbConnected = true;
         dbConnectionError = null;
-        initializeSqliteSchema();
-        resolve();
+        try {
+          await initializeSqliteSchema();
+          resolve();
+        } catch (initErr) {
+          console.error('CRITICAL: SQLite schema initialization failed:', initErr.message);
+          isDbConnected = false;
+          dbConnectionError = initErr.message;
+          reject(initErr);
+        }
       }
     });
   });
@@ -109,138 +116,148 @@ function setupSQLite() {
 
 // SQLite Schema
 function initializeSqliteSchema() {
-  sqliteDb.serialize(() => {
-    sqliteDb.run(`CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      name TEXT DEFAULT '',
-      currency TEXT DEFAULT 'INR',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
+  return new Promise((resolve, reject) => {
+    sqliteDb.serialize(() => {
+      sqliteDb.run(`CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        name TEXT DEFAULT '',
+        currency TEXT DEFAULT 'INR',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`);
 
-    sqliteDb.run(`CREATE TABLE IF NOT EXISTS transactions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('income','expense')),
-      amount REAL NOT NULL,
-      amount_enc TEXT DEFAULT '',
-      category TEXT NOT NULL,
-      description TEXT DEFAULT '',
-      merchant TEXT DEFAULT '',
-      merchant_enc TEXT DEFAULT '',
-      date TEXT NOT NULL,
-      payment_method TEXT DEFAULT 'Other',
-      source TEXT DEFAULT 'manual',
-      raw_sms TEXT DEFAULT '',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )`);
+      sqliteDb.run(`CREATE TABLE IF NOT EXISTS transactions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('income','expense')),
+        amount REAL NOT NULL,
+        amount_enc TEXT DEFAULT '',
+        category TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        merchant TEXT DEFAULT '',
+        merchant_enc TEXT DEFAULT '',
+        date TEXT NOT NULL,
+        payment_method TEXT DEFAULT 'Other',
+        source TEXT DEFAULT 'manual',
+        raw_sms TEXT DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`);
 
-    sqliteDb.run(`CREATE TABLE IF NOT EXISTS holdings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      symbol TEXT NOT NULL,
-      name TEXT DEFAULT '',
-      exchange TEXT DEFAULT 'NSE',
-      quantity REAL NOT NULL,
-      avg_buy_price REAL NOT NULL,
-      buy_date TEXT,
-      asset_type TEXT DEFAULT 'stock',
-      source TEXT DEFAULT 'manual',
-      notes TEXT DEFAULT '',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )`);
+      sqliteDb.run(`CREATE TABLE IF NOT EXISTS holdings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        symbol TEXT NOT NULL,
+        name TEXT DEFAULT '',
+        exchange TEXT DEFAULT 'NSE',
+        quantity REAL NOT NULL,
+        avg_buy_price REAL NOT NULL,
+        buy_date TEXT,
+        asset_type TEXT DEFAULT 'stock',
+        source TEXT DEFAULT 'manual',
+        notes TEXT DEFAULT '',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`);
 
-    sqliteDb.run(`CREATE TABLE IF NOT EXISTS budgets (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      category TEXT NOT NULL,
-      monthly_limit REAL NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(user_id, category),
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )`);
+      sqliteDb.run(`CREATE TABLE IF NOT EXISTS budgets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        category TEXT NOT NULL,
+        monthly_limit REAL NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, category),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`);
 
-    sqliteDb.run(`CREATE TABLE IF NOT EXISTS savings_goals (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      name TEXT NOT NULL,
-      target_amount REAL NOT NULL,
-      current_amount REAL DEFAULT 0,
-      deadline TEXT,
-      icon TEXT DEFAULT '🎯',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )`);
+      sqliteDb.run(`CREATE TABLE IF NOT EXISTS savings_goals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        target_amount REAL NOT NULL,
+        current_amount REAL DEFAULT 0,
+        deadline TEXT,
+        icon TEXT DEFAULT '🎯',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`);
 
-    sqliteDb.run(`CREATE TABLE IF NOT EXISTS categories (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER DEFAULT 0,
-      name TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('income','expense')),
-      icon TEXT DEFAULT '📌',
-      color TEXT DEFAULT '#6b7280'
-    )`);
+      sqliteDb.run(`CREATE TABLE IF NOT EXISTS categories (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER DEFAULT 0,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL CHECK(type IN ('income','expense')),
+        icon TEXT DEFAULT '📌',
+        color TEXT DEFAULT '#6b7280'
+      )`);
 
-    sqliteDb.run(`CREATE TABLE IF NOT EXISTS ai_reports (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL,
-      month TEXT NOT NULL,
-      report TEXT NOT NULL,
-      spending_score REAL,
-      savings_rate REAL,
-      generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-    )`);
+      sqliteDb.run(`CREATE TABLE IF NOT EXISTS ai_reports (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        month TEXT NOT NULL,
+        report TEXT NOT NULL,
+        spending_score REAL,
+        savings_rate REAL,
+        generated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      )`);
 
-    // Seed default categories
-    sqliteDb.get('SELECT COUNT(*) as count FROM categories', (err, row) => {
-      if (!err && row.count === 0) {
-        const cats = [
-          [0,'Food & Dining','expense','🍕','#f97316'],
-          [0,'Transport','expense','🚗','#3b82f6'],
-          [0,'Shopping','expense','🛍️','#a855f7'],
-          [0,'Rent','expense','🏠','#6366f1'],
-          [0,'Bills & Utilities','expense','📱','#eab308'],
-          [0,'Entertainment','expense','🎬','#ec4899'],
-          [0,'Health','expense','💊','#14b8a6'],
-          [0,'Education','expense','📚','#8b5cf6'],
-          [0,'Groceries','expense','🛒','#22c55e'],
-          [0,'Insurance','expense','🛡️','#64748b'],
-          [0,'EMI & Loans','expense','🏦','#dc2626'],
-          [0,'Church','expense','⛪','#6366f1'],
-          [0,'Stocks','expense','📈','#f59e0b'],
-          [0,'Other','expense','📌','#6b7280'],
-          [0,'Salary','income','💰','#10b981'],
-          [0,'Freelance','income','💻','#22d3ee'],
-          [0,'Investment','income','📈','#f59e0b'],
-          [0,'Refund','income','↩️','#84cc16'],
-          [0,'Other Income','income','💵','#84cc16']
-        ];
-        const stmt = sqliteDb.prepare('INSERT INTO categories (user_id,name,type,icon,color) VALUES (?,?,?,?,?)');
-        cats.forEach(c => stmt.run(c));
-        stmt.finalize();
-        console.log('SQLite: Default categories seeded.');
-      } else {
-        // Ensure Church category exists for existing SQLite database
-        sqliteDb.get("SELECT COUNT(*) as count FROM categories WHERE user_id = 0 AND name = 'Church'", (err2, row2) => {
-          if (!err2 && row2.count === 0) {
-            sqliteDb.run("INSERT INTO categories (user_id, name, type, icon, color) VALUES (0, 'Church', 'expense', '⛪', '#6366f1')");
-            console.log('SQLite: Seeded "Church" category.');
-          }
-        });
-        // Ensure Stocks category exists for existing SQLite database
-        sqliteDb.get("SELECT COUNT(*) as count FROM categories WHERE user_id = 0 AND name = 'Stocks'", (err3, row3) => {
-          if (!err3 && row3.count === 0) {
-            sqliteDb.run("INSERT INTO categories (user_id, name, type, icon, color) VALUES (0, 'Stocks', 'expense', '📈', '#f59e0b')");
-            console.log('SQLite: Seeded "Stocks" category.');
-          }
-        });
-      }
+      // Seed default categories
+      sqliteDb.get('SELECT COUNT(*) as count FROM categories', (err, row) => {
+        if (err) {
+          return reject(err);
+        }
+        if (row && row.count === 0) {
+          const cats = [
+            [0,'Food & Dining','expense','🍕','#f97316'],
+            [0,'Transport','expense','🚗','#3b82f6'],
+            [0,'Shopping','expense','🛍️','#a855f7'],
+            [0,'Rent','expense','🏠','#6366f1'],
+            [0,'Bills & Utilities','expense','📱','#eab308'],
+            [0,'Entertainment','expense','🎬','#ec4899'],
+            [0,'Health','expense','💊','#14b8a6'],
+            [0,'Education','expense','📚','#8b5cf6'],
+            [0,'Groceries','expense','🛒','#22c55e'],
+            [0,'Insurance','expense','🛡️','#64748b'],
+            [0,'EMI & Loans','expense','🏦','#dc2626'],
+            [0,'Church','expense','⛪','#6366f1'],
+            [0,'Stocks','expense','📈','#f59e0b'],
+            [0,'Other','expense','📌','#6b7280'],
+            [0,'Salary','income','💰','#10b981'],
+            [0,'Freelance','income','💻','#22d3ee'],
+            [0,'Investment','income','📈','#f59e0b'],
+            [0,'Refund','income','↩️','#84cc16'],
+            [0,'Other Income','income','💵','#84cc16']
+          ];
+          const stmt = sqliteDb.prepare('INSERT INTO categories (user_id,name,type,icon,color) VALUES (?,?,?,?,?)');
+          cats.forEach(c => stmt.run(c));
+          stmt.finalize((fErr) => {
+            if (fErr) return reject(fErr);
+            console.log('SQLite: Default categories seeded.');
+            console.log('SQLite Database schema initialized.');
+            resolve();
+          });
+        } else {
+          // Ensure Church category exists for existing SQLite database
+          sqliteDb.get("SELECT COUNT(*) as count FROM categories WHERE user_id = 0 AND name = 'Church'", (err2, row2) => {
+            if (!err2 && row2 && row2.count === 0) {
+              sqliteDb.run("INSERT INTO categories (user_id, name, type, icon, color) VALUES (0, 'Church', 'expense', '⛪', '#6366f1')");
+              console.log('SQLite: Seeded "Church" category.');
+            }
+          });
+          // Ensure Stocks category exists for existing SQLite database
+          sqliteDb.get("SELECT COUNT(*) as count FROM categories WHERE user_id = 0 AND name = 'Stocks'", (err3, row3) => {
+            if (!err3 && row3 && row3.count === 0) {
+              sqliteDb.run("INSERT INTO categories (user_id, name, type, icon, color) VALUES (0, 'Stocks', 'expense', '📈', '#f59e0b')");
+              console.log('SQLite: Seeded "Stocks" category.');
+            }
+            console.log('SQLite Database schema initialized.');
+            resolve();
+          });
+        }
+      });
     });
-    console.log('SQLite Database schema initialized.');
   });
 }
 
