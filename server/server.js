@@ -9,30 +9,113 @@ import { query } from './database.js';
 import { parseSMS, parseBulkSMS } from './smsParser.js';
 import { importCSV } from './csvImporter.js';
 import { getLivePrices, searchSymbol } from './marketData.js';
-import { handleAiChat, generateMonthlyReport } from './aiAdvisor.js';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import { handleAiChat, generateMonthlyReport, confirmPendingAction, getPendingAction } from './aiAdvisor.js';
 import { getAppKey, encrypt, decrypt } from './crypto.js';
 import { validatePassword } from './passwordValidator.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
-const JWT_SECRET = process.env.JWT_SECRET || 'savewise_secret';
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-app.use(cors());
-app.use(express.json({ limit: '5mb' }));
+// Mandatory JWT_SECRET validation (no insecure fallback)
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET || JWT_SECRET.length < 16) {
+  console.error('FATAL: JWT_SECRET environment variable is missing or too short.');
+  process.exit(1);
+}
 
-// Auth middleware
+// In-memory token blacklist for revocation / logout
+const tokenBlacklist = new Set();
+
+// Rate limiters
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30, // 30 attempts per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many authentication attempts. Please try again after 15 minutes.' }
+});
+
+const aiLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000, // 1 minute
+  max: 20, // 20 requests per minute
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Rate limit exceeded for AI advisor requests. Please wait a minute.' }
+});
+
+const apiLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000, // 5 minutes
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Security headers
+app.use(helmet({
+  contentSecurityPolicy: false, // Allows Vite client scripts in unified dev/demo deployment
+  crossOriginEmbedderPolicy: false
+}));
+
+// CORS Configuration with strict whitelist
+const defaultOrigins = ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173', 'http://localhost:4000'];
+const allowedOrigins = process.env.ALLOWED_ORIGINS 
+  ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) 
+  : defaultOrigins;
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      callback(null, true);
+    } else {
+      callback(new Error(`CORS blocked for origin: ${origin}`));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+}));
+
+// Restrict default JSON body limit to 200kb
+app.use(express.json({ limit: '200kb' }));
+app.use('/api/', apiLimiter);
+
+// File upload constraint: CSV only, max 5MB
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const isCsv = file.mimetype === 'text/csv' || 
+                  file.mimetype === 'application/vnd.ms-excel' || 
+                  file.originalname.toLowerCase().endsWith('.csv');
+    if (isCsv) {
+      cb(null, true);
+    } else {
+      cb(new Error('Invalid file type: Only CSV files (.csv) are supported.'));
+    }
+  }
+});
+
+// Auth middleware with revocation check
 const auth = (req, res, next) => {
-  const token = req.headers['authorization']?.split(' ')[1];
-  if (!token) return res.status(401).json({ error: 'Token missing' });
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'Authentication token missing' });
+
+  if (tokenBlacklist.has(token)) {
+    return res.status(401).json({ error: 'Token has been revoked. Please log in again.' });
+  }
+
   jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ error: 'Invalid token' });
-    req.user = user; next();
+    if (err) return res.status(403).json({ error: 'Invalid or expired token' });
+    req.user = user;
+    req.rawToken = token;
+    next();
   });
 };
 
 // ═══ AUTH ═══
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', authLimiter, async (req, res) => {
   const { email, password, name } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
@@ -44,21 +127,45 @@ app.post('/api/auth/register', async (req, res) => {
     if (exists) return res.status(400).json({ error: 'Email already registered' });
     const hash = await bcrypt.hash(password, 12);
     const r = await query.run('INSERT INTO users (email, password_hash, name) VALUES (?,?,?)', [email, hash, name || '']);
-    const token = jwt.sign({ id: r.id, email, name }, JWT_SECRET, { expiresIn: '30d' });
+    
+    // Short-lived access token + user payload
+    const token = jwt.sign({ id: r.id, email, name }, JWT_SECRET, { expiresIn: '1h' });
     res.status(201).json({ token, user: { id: r.id, email, name } });
-  } catch (e) { res.status(500).json({ error: e.message || 'Registration failed' }); }
+  } catch (e) { res.status(500).json({ error: 'Registration failed. Please try again.' }); }
 });
 
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', authLimiter, async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
   try {
     const user = await query.get('SELECT * FROM users WHERE email = ?', [email]);
     if (!user || !(await bcrypt.compare(password, user.password_hash)))
-      return res.status(400).json({ error: 'Invalid credentials' });
-    const token = jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: '30d' });
+      return res.status(400).json({ error: 'Invalid email or password' });
+      
+    // 1-hour access token with refresh capability
+    const token = jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: '1h' });
     res.json({ token, user: { id: user.id, email: user.email, name: user.name } });
-  } catch (e) { res.status(500).json({ error: e.message || 'Login failed' }); }
+  } catch (e) { res.status(500).json({ error: 'Login failed. Please try again.' }); }
+});
+
+// Refresh token route
+app.post('/api/auth/refresh', auth, (req, res) => {
+  const newToken = jwt.sign({ id: req.user.id, email: req.user.email, name: req.user.name }, JWT_SECRET, { expiresIn: '1h' });
+  res.json({ token: newToken, user: req.user });
+});
+
+// Logout endpoint with token revocation
+app.post('/api/auth/logout', auth, (req, res) => {
+  if (req.rawToken) {
+    tokenBlacklist.add(req.rawToken);
+    // Cleanup blacklist memory periodically (capped at 5000 tokens)
+    if (tokenBlacklist.size > 5000) {
+      const items = Array.from(tokenBlacklist);
+      tokenBlacklist.clear();
+      items.slice(2500).forEach(t => tokenBlacklist.add(t));
+    }
+  }
+  res.json({ success: true, message: 'Logged out successfully and token revoked.' });
 });
 
 app.get('/api/auth/me', auth, async (req, res) => {
@@ -140,8 +247,28 @@ app.get('/api/transactions', auth, async (req, res) => {
   if (category) { sql += ' AND category=?'; params.push(category); }
   if (type) { sql += ' AND type=?'; params.push(type); }
   sql += ' ORDER BY date DESC, created_at DESC';
-  try { res.json(await query.all(sql, params)); }
-  catch (e) { res.status(500).json({ error: 'Failed' }); }
+  try { 
+    const rows = await query.all(sql, params);
+    const key = getAppKey();
+    const sanitizedRows = rows.map(r => {
+      let finalAmount = r.amount;
+      if ((!finalAmount || finalAmount === 0) && r.amount_enc) {
+        finalAmount = decrypt(r.amount_enc, key);
+        finalAmount = parseFloat(finalAmount) || 0;
+      }
+      let finalMerchant = r.merchant;
+      if (!finalMerchant && r.merchant_enc) {
+        finalMerchant = decrypt(r.merchant_enc, key);
+      }
+      return {
+        ...r,
+        amount: finalAmount,
+        merchant: finalMerchant
+      };
+    });
+    res.json(sanitizedRows); 
+  }
+  catch (e) { res.status(500).json({ error: 'Failed to retrieve transactions' }); }
 });
 
 app.post('/api/transactions', auth, async (req, res) => {
@@ -224,11 +351,16 @@ app.get('/api/dashboard/summary', auth, async (req, res) => {
 
     let totalIncome = 0, totalExpenses = 0;
     const catTotals = {}, dailyMap = {};
+    const key = getAppKey();
     txns.forEach(t => {
-      if (t.type === 'income') totalIncome += t.amount; else totalExpenses += t.amount;
-      if (t.type === 'expense') catTotals[t.category] = (catTotals[t.category] || 0) + t.amount;
+      let amt = t.amount;
+      if ((!amt || amt === 0) && t.amount_enc) {
+        amt = parseFloat(decrypt(t.amount_enc, key)) || 0;
+      }
+      if (t.type === 'income') totalIncome += amt; else totalExpenses += amt;
+      if (t.type === 'expense') catTotals[t.category] = (catTotals[t.category] || 0) + amt;
       if (!dailyMap[t.date]) dailyMap[t.date] = { date: t.date, income: 0, expense: 0 };
-      dailyMap[t.date][t.type === 'income' ? 'income' : 'expense'] += t.amount;
+      dailyMap[t.date][t.type === 'income' ? 'income' : 'expense'] += amt;
     });
 
     const catLookup = {}; cats.forEach(c => { catLookup[c.name] = c; });
@@ -342,11 +474,40 @@ app.delete('/api/savings-goals/:id', auth, async (req, res) => {
 });
 
 // ═══ AI ═══
-app.post('/api/ai/chat', auth, async (req, res) => {
+app.post('/api/ai/chat', auth, aiLimiter, async (req, res) => {
   const { messages } = req.body;
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'Messages required' });
   try { res.json(await handleAiChat(req.user.id, messages)); }
-  catch (e) { res.status(500).json({ error: 'AI failed' }); }
+  catch (e) { 
+    console.error('AI Chat Error:', e);
+    res.status(500).json({ error: 'AI processing failed. Please try again.' }); 
+  }
+});
+
+// AI Pending Action Confirmation Endpoint (Human-in-the-loop protection)
+app.post('/api/ai/confirm', auth, async (req, res) => {
+  const { actionId } = req.body;
+  if (!actionId) return res.status(400).json({ error: 'actionId is required' });
+  
+  try {
+    const result = await confirmPendingAction(actionId, req.user.id);
+    if (!result.success) {
+      return res.status(400).json({ error: result.error });
+    }
+    res.json(result);
+  } catch (e) {
+    console.error('AI Confirmation Error:', e);
+    res.status(500).json({ error: 'Confirmation processing failed' });
+  }
+});
+
+// AI Pending Action Detail Inspection
+app.get('/api/ai/pending/:actionId', auth, (req, res) => {
+  const action = getPendingAction(req.params.actionId);
+  if (!action || action.userId !== req.user.id) {
+    return res.status(404).json({ error: 'Pending action not found or expired' });
+  }
+  res.json({ actionId: action.actionId, type: action.type, data: action.data, expiresAt: action.expiresAt });
 });
 
 app.get('/api/ai/monthly-report', auth, async (req, res) => {
@@ -355,7 +516,10 @@ app.get('/api/ai/monthly-report', auth, async (req, res) => {
     const existing = await query.get('SELECT * FROM ai_reports WHERE user_id=? AND month=?', [req.user.id, month]);
     if (existing) return res.json({ report: existing.report, month, savingsRate: existing.savings_rate, cached: true });
     res.json(await generateMonthlyReport(req.user.id, month));
-  } catch (e) { res.status(500).json({ error: 'Report failed' }); }
+  } catch (e) { 
+    console.error('Monthly Report Error:', e);
+    res.status(500).json({ error: 'Report generation failed' }); 
+  }
 });
 
 // ═══ SYSTEM / DIAGNOSTICS ═══
@@ -377,6 +541,27 @@ app.get('/api/system/ip', auth, (req, res) => {
   } catch (e) {
     res.json({ ip: 'localhost' });
   }
+});
+
+// Centralized error handling middleware (Hides internal stack traces in responses)
+app.use((err, req, res, next) => {
+  console.error('Unhandled API Error:', err);
+  if (res.headersSent) return next(err);
+  
+  if (err.name === 'UnauthorizedError' || err.message?.includes('Token')) {
+    return res.status(401).json({ error: 'Authentication failed' });
+  }
+  
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'Payload too large' });
+  }
+  
+  const status = err.status || 500;
+  const message = process.env.NODE_ENV === 'production' 
+    ? 'Internal Server Error' 
+    : (err.message || 'Internal Server Error');
+    
+  res.status(status).json({ error: message });
 });
 
 app.listen(PORT, () => console.log(`\n🟢 SaveWise server running on http://localhost:${PORT}\n`));

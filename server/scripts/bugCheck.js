@@ -34,9 +34,10 @@ try {
   const port = process.env.PORT || 4000;
   const hasJwt = !!process.env.JWT_SECRET;
   const hasSalt = !!process.env.ENCRYPTION_SALT;
+  const hasMaster = !!process.env.ENCRYPTION_MASTER_KEY;
   const hasDb = !!process.env.DATABASE_URL;
 
-  reportTest('ENV', 'Core App Configuration', true, `PORT=${port}, JWT_SECRET=${hasJwt ? 'Configured' : 'Using Safe Fallback'}, ENCRYPTION_SALT=${hasSalt ? 'Configured' : 'Using Safe Fallback'}`);
+  reportTest('ENV', 'Core App Configuration', true, `PORT=${port}, JWT_SECRET=${hasJwt ? 'Configured' : 'Missing'}, ENCRYPTION_MASTER_KEY=${hasMaster ? 'Configured' : 'Missing'}`);
   reportTest('ENV', 'Database Target Config', true, hasDb ? 'PostgreSQL DATABASE_URL provided' : 'Local SQLite database mode');
 
   if (process.env.OPENROUTER_API_KEY || process.env.OPENAI_API_KEY) {
@@ -59,7 +60,7 @@ try {
   const decrypted = decrypt(encrypted, secretKey);
 
   if (decrypted === sampleString) {
-    reportTest('CRYPTO', 'AES-256-GCM Loop', true, 'String encryption & decryption verified');
+    reportTest('CRYPTO', 'AES-256-GCM Loop', true, 'String encryption & decryption verified with separate master key');
   } else {
     reportTest('CRYPTO', 'AES-256-GCM Loop', false, 'Decrypted value mismatch');
   }
@@ -189,11 +190,46 @@ function testPasswordEngine() {
   }
 }
 
+// ─── 7. SECURITY & INTEGRITY SUITE ───
+import { sanitizeCsvField } from '../csvImporter.js';
+import { pendingAiActions, confirmPendingAction } from '../aiAdvisor.js';
+
+async function testSecurityFeatures() {
+  console.log('\n🔹 7. Testing Security Invariants & Human-in-the-Loop Safeguards...');
+  try {
+    // Test CSV formula injection neutralization
+    const dangerousCell = '=SUM(1+1)';
+    const sanitized = sanitizeCsvField(dangerousCell);
+    const passFormula = sanitized.startsWith("'=");
+    reportTest('SECURITY', 'CSV Formula Injection Neutralization', passFormula, `Sanitized "${dangerousCell}" -> "${sanitized}"`);
+
+    // Test AI Pending Action human confirmation isolation
+    const fakeActionId = 'test_act_secure_001';
+    pendingAiActions.set(fakeActionId, {
+      actionId: fakeActionId,
+      userId: 9999,
+      type: 'add_holding',
+      data: { sym: 'TESTCO', name: 'TESTCO Stock', ex: 'NSE', quantity: 10, avgBuyPrice: 100, date: '2026-01-01' },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 60000
+    });
+
+    const unauthorizedConfirm = await confirmPendingAction(fakeActionId, 8888);
+    const passAuth = !unauthorizedConfirm.success && unauthorizedConfirm.error.includes('Unauthorized');
+    reportTest('SECURITY', 'AI Action Human Confirmation IDOR Protection', passAuth, 'Blocked cross-user confirmation attempt');
+
+    pendingAiActions.delete(fakeActionId);
+  } catch (err) {
+    reportTest('SECURITY', 'Security Verification', false, err.message);
+  }
+}
+
 // ─── MAIN RUNNER ───
 async function runAllDiagnostics() {
   await testDatabase();
   await testStockEngine();
   testPasswordEngine();
+  await testSecurityFeatures();
 
   console.log('\n======================================================');
   console.log(`📊 DIAGNOSTIC SUMMARY: ${passes} Passed | ${failures} Failed`);

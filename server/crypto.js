@@ -11,12 +11,22 @@ const KEY_LENGTH = 32;
 const PBKDF2_ITERATIONS = 100000;
 
 /**
- * Derives a 256-bit encryption key from a password + salt using PBKDF2
+ * Derives a 256-bit encryption key from a master key / password + salt using PBKDF2
  * This key is kept in memory only — never written to disk
  */
-export function deriveKey(password, salt) {
-  const saltBuf = Buffer.from(salt || process.env.ENCRYPTION_SALT || 'default_salt', 'utf8');
-  return crypto.pbkdf2Sync(password, saltBuf, PBKDF2_ITERATIONS, KEY_LENGTH, 'sha512');
+export function deriveKey(masterSecret, salt) {
+  const secret = masterSecret || process.env.ENCRYPTION_MASTER_KEY;
+  const saltVal = salt || process.env.ENCRYPTION_SALT;
+
+  if (!secret) {
+    throw new Error('ENCRYPTION_MASTER_KEY is required and cannot be empty.');
+  }
+  if (!saltVal) {
+    throw new Error('ENCRYPTION_SALT is required and cannot be empty.');
+  }
+
+  const saltBuf = Buffer.from(saltVal, 'utf8');
+  return crypto.pbkdf2Sync(secret, saltBuf, PBKDF2_ITERATIONS, KEY_LENGTH, 'sha512');
 }
 
 /**
@@ -24,7 +34,7 @@ export function deriveKey(password, salt) {
  * Returns: base64 string of (IV + AuthTag + Ciphertext)
  */
 export function encrypt(plaintext, key) {
-  if (!plaintext) return '';
+  if (!plaintext && plaintext !== 0) return '';
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
   const encrypted = Buffer.concat([cipher.update(String(plaintext), 'utf8'), cipher.final()]);
@@ -41,6 +51,7 @@ export function decrypt(encryptedBase64, key) {
   if (!encryptedBase64) return '';
   try {
     const buf = Buffer.from(encryptedBase64, 'base64');
+    if (buf.length < IV_LENGTH + TAG_LENGTH) return '';
     const iv = buf.subarray(0, IV_LENGTH);
     const tag = buf.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH);
     const ciphertext = buf.subarray(IV_LENGTH + TAG_LENGTH);
@@ -73,13 +84,17 @@ export function hashKey(key) {
   return crypto.createHash('sha256').update(key).digest('hex');
 }
 
-// App-level encryption key (derived once at login, kept in memory per-session)
-// For a local single-user app, we use a fixed app-level key derived from the JWT secret
+// App-level encryption key derived from dedicated ENCRYPTION_MASTER_KEY
 let appKey = null;
 
 export function getAppKey() {
   if (!appKey) {
-    appKey = deriveKey(process.env.JWT_SECRET || 'fallback_secret', process.env.ENCRYPTION_SALT);
+    const masterKey = process.env.ENCRYPTION_MASTER_KEY;
+    const salt = process.env.ENCRYPTION_SALT;
+    if (!masterKey || !salt) {
+      throw new Error('ENCRYPTION_MASTER_KEY and ENCRYPTION_SALT must be configured in environment');
+    }
+    appKey = deriveKey(masterKey, salt);
   }
   return appKey;
 }

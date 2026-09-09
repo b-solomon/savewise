@@ -25,17 +25,18 @@ function initDatabase() {
         console.log('Detected DATABASE_URL. Connecting to PostgreSQL...');
         let currentUrl = process.env.DATABASE_URL;
         
-        let retries = 5;
+        let retries = 2;
         while (retries > 0) {
           try {
             const pg = await import('pg');
             const { Pool } = pg.default;
             if (pgPool) { try { await pgPool.end(); } catch {} }
             
+            const rejectUnauthorized = process.env.DB_SSL_REJECT_UNAUTHORIZED === 'true';
             pgPool = new Pool({
               connectionString: currentUrl,
-              ssl: { rejectUnauthorized: false },
-              connectionTimeoutMillis: 5000
+              ssl: { rejectUnauthorized },
+              connectionTimeoutMillis: 2000
             });
 
             await pgPool.query('SELECT NOW()');

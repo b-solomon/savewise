@@ -28,7 +28,14 @@ export default function AiAdvisor({ token, user }) {
       const r = await fetch('/api/ai/chat',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({messages:up})});
       const d = await r.json();
       if (!r.ok || d.error) throw new Error(d.error || 'Failed to get AI response');
-      setMsgs(p=>[...p,d]);
+      
+      // Check if response contains an actionId proposal
+      let pendingAction = d.pendingAction || null;
+      if (!pendingAction && d.text) {
+        const match = d.text.match(/act_\d+_[a-z0-9]+/i);
+        if (match) pendingAction = match[0];
+      }
+      setMsgs(p=>[...p, { ...d, pendingAction }]);
     } catch(e) { setMsgs(p=>[...p,{sender:'ai',text:`Error: ${e.message}`,timestamp:new Date().toISOString()}]); }
     finally { setLoading(false); }
   };
@@ -90,7 +97,42 @@ export default function AiAdvisor({ token, user }) {
         {msgs.map((m,i)=>(
           <div key={i} className={`flex ${m.sender==='user'?'justify-end':'justify-start'}`}>
             <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs leading-relaxed ${m.sender==='user'?'bg-savings/12 text-white rounded-br-md':'glass text-gray-300 rounded-bl-md'}`}>
-              {m.sender==='user' ? m.text : <span dangerouslySetInnerHTML={{__html:fmt(m.text)}} />}
+              {m.sender==='user' ? m.text : (
+                <div>
+                  <span dangerouslySetInnerHTML={{__html:fmt(m.text)}} />
+                  {m.pendingAction && !m.confirmed && (
+                    <div className="mt-3 pt-2 border-t border-white/10 flex items-center gap-2">
+                      <button 
+                        onClick={async () => {
+                          try {
+                            const res = await fetch('/api/ai/confirm', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                              body: JSON.stringify({ actionId: m.pendingAction })
+                            });
+                            const data = await res.json();
+                            if (!res.ok || data.error) throw new Error(data.error || 'Failed to confirm');
+                            setMsgs(prev => prev.map((item, idx) => idx === i ? { ...item, confirmed: true, text: `${item.text}\n\n✅ **Action Confirmed:** ${data.message}` } : item));
+                          } catch (err) {
+                            alert(err.message);
+                          }
+                        }}
+                        className="px-2.5 py-1 rounded bg-savings text-white font-medium hover:opacity-90 text-[11px] cursor-pointer"
+                      >
+                        Confirm Action
+                      </button>
+                      <button 
+                        onClick={() => {
+                          setMsgs(prev => prev.map((item, idx) => idx === i ? { ...item, confirmed: true, text: `${item.text}\n\n❌ **Action Cancelled by User.**` } : item));
+                        }}
+                        className="px-2.5 py-1 rounded bg-white/10 text-gray-300 hover:bg-white/20 text-[11px] cursor-pointer"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
         ))}

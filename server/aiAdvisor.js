@@ -95,6 +95,54 @@ const tools = [
   }
 ];
 
+// Pending Actions Store with 10-minute expiration for human-in-the-loop confirmation
+export const pendingAiActions = new Map();
+
+export function getPendingAction(actionId) {
+  const item = pendingAiActions.get(actionId);
+  if (!item) return null;
+  if (Date.now() > item.expiresAt) {
+    pendingAiActions.delete(actionId);
+    return null;
+  }
+  return item;
+}
+
+export async function confirmPendingAction(actionId, userId) {
+  const item = getPendingAction(actionId);
+  if (!item) {
+    return { success: false, error: 'Action not found or expired. Please ask the AI assistant again.' };
+  }
+  if (item.userId !== userId) {
+    return { success: false, error: 'Unauthorized confirmation attempt.' };
+  }
+
+  try {
+    let resultMessage = '';
+    if (item.type === 'add_holding') {
+      const { sym, name, ex, quantity, avgBuyPrice, date } = item.data;
+      await query.run(
+        `INSERT INTO holdings (user_id, symbol, name, exchange, quantity, avg_buy_price, buy_date, asset_type, source) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, sym, name, ex, quantity, avgBuyPrice, date, 'stock', 'ai_confirmed']
+      );
+      resultMessage = `Confirmed and added ${quantity} shares of ${sym} at ₹${avgBuyPrice} to your portfolio.`;
+    } else if (item.type === 'add_transaction') {
+      const { type, amount, category, desc, merchant, date, method } = item.data;
+      await query.run(
+        `INSERT INTO transactions (user_id, type, amount, category, description, merchant, date, payment_method, source) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, type, amount, category, desc, merchant, date, method, 'ai_confirmed']
+      );
+      resultMessage = `Confirmed and added ${type} transaction of ₹${amount} under ${category}.`;
+    }
+    pendingAiActions.delete(actionId);
+    return { success: true, message: resultMessage };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 async function executeToolCall(userId, tc) {
   const funcName = tc.function.name;
   let args;
@@ -104,31 +152,72 @@ async function executeToolCall(userId, tc) {
     console.error("Raw tool call arguments:", tc.function.arguments);
     throw new Error(`Invalid JSON arguments from AI model: ${err.message}`);
   }
-  console.log(`Executing tool call for user ${userId}: ${funcName}`, args);
+  console.log(`Processing tool proposal for user ${userId}: ${funcName}`, args);
 
   if (funcName === 'add_holding') {
-    const sym = args.symbol.toUpperCase();
+    const sym = (args.symbol || '').toUpperCase().trim();
+    const quantity = parseFloat(args.quantity);
+    const avgBuyPrice = parseFloat(args.avgBuyPrice);
+
+    // Robust validation
+    if (!sym || !/^[A-Z0-9.-]{1,15}$/.test(sym)) throw new Error('Invalid stock symbol format.');
+    if (!Number.isFinite(quantity) || quantity <= 0) throw new Error('Stock quantity must be a positive number.');
+    if (!Number.isFinite(avgBuyPrice) || avgBuyPrice <= 0) throw new Error('Average buy price must be a positive number.');
+
     const name = `${sym} Stock`;
     const date = args.buyDate || new Date().toISOString().split('T')[0];
-    const ex = args.exchange || 'NSE';
-    await query.run(
-      `INSERT INTO holdings (user_id, symbol, name, exchange, quantity, avg_buy_price, buy_date, asset_type, source) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [userId, sym, name, ex, args.quantity, args.avgBuyPrice, date, 'stock', 'manual']
-    );
-    return { success: true, message: `Successfully added ${args.quantity} shares of ${sym} at ₹${args.avgBuyPrice} to portfolio.` };
+    const ex = ['NSE', 'BSE', 'US'].includes(args.exchange) ? args.exchange : 'NSE';
+
+    const actionId = `act_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    pendingAiActions.set(actionId, {
+      actionId,
+      userId,
+      type: 'add_holding',
+      data: { sym, name, ex, quantity, avgBuyPrice, date },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 10 * 60 * 1000
+    });
+
+    return {
+      status: 'pending_confirmation',
+      actionId,
+      summary: `Propose adding ${quantity} shares of ${sym} (${ex}) at ₹${avgBuyPrice}/share.`,
+      instruction: 'Awaiting explicit user confirmation before recording in the database.'
+    };
   }
 
   if (funcName === 'add_transaction') {
+    const type = args.type === 'income' ? 'income' : 'expense';
+    const amount = parseFloat(args.amount);
+    const category = (args.category || 'Other').trim().slice(0, 50);
+
+    // Robust business validation
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 100000000) {
+      throw new Error('Transaction amount must be a positive finite number within realistic limits.');
+    }
+    if (!category) throw new Error('Category is required.');
+
     const date = args.date || new Date().toISOString().split('T')[0];
-    const method = args.paymentMethod || 'Other';
-    const desc = args.description || `${args.type === 'income' ? 'Received from' : 'Paid to'} ${args.merchant || args.category}`;
-    await query.run(
-      `INSERT INTO transactions (user_id, type, amount, category, description, merchant, date, payment_method, source) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [userId, args.type, args.amount, args.category, desc, args.merchant || '', date, method, 'manual']
-    );
-    return { success: true, message: `Successfully added transaction of ₹${args.amount} under ${args.category}.` };
+    const method = (args.paymentMethod || 'Other').slice(0, 30);
+    const merchant = (args.merchant || '').slice(0, 50);
+    const desc = (args.description || `${type === 'income' ? 'Received from' : 'Paid to'} ${merchant || category}`).slice(0, 150);
+
+    const actionId = `act_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    pendingAiActions.set(actionId, {
+      actionId,
+      userId,
+      type: 'add_transaction',
+      data: { type, amount, category, desc, merchant, date, method },
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 10 * 60 * 1000
+    });
+
+    return {
+      status: 'pending_confirmation',
+      actionId,
+      summary: `Propose recording ${type} of ₹${amount} under category '${category}'.`,
+      instruction: 'Awaiting explicit user confirmation before recording in the database.'
+    };
   }
 
   return { error: 'Unknown function' };

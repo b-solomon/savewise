@@ -77,7 +77,26 @@ function categorize(desc, type) {
   return type === 'income' ? 'Other Income' : 'Other';
 }
 
+const MAX_CSV_ROWS = 5000;
+const MAX_CSV_COLS = 50;
+
+/**
+ * Neutralizes CSV formula injection characters (=, +, -, @, \t, \r)
+ */
+export function sanitizeCsvField(val) {
+  if (val === null || val === undefined) return '';
+  let str = String(val).trim();
+  if (/^[=+\-@\t\r]/.test(str)) {
+    str = `'${str}`;
+  }
+  return str;
+}
+
 export function importCSV(csvContent) {
+  if (!csvContent || typeof csvContent !== 'string') {
+    return { error: 'Invalid or empty CSV content', results: [] };
+  }
+
   let records;
   try {
     records = parse(csvContent, { columns: false, skip_empty_lines: true, relax_column_count: true, bom: true });
@@ -85,12 +104,19 @@ export function importCSV(csvContent) {
     return { error: `CSV parse error: ${e.message}`, results: [] };
   }
 
-  if (records.length < 1) return { error: 'CSV has no data', results: [] };
+  if (!records || records.length < 1) return { error: 'CSV has no data', results: [] };
+
+  if (records.length > MAX_CSV_ROWS) {
+    return { error: `CSV exceeds maximum limit of ${MAX_CSV_ROWS} rows. Please split the file.`, results: [] };
+  }
 
   // Find the header row index by scanning the first 15 rows
   let headerIndex = 0;
   for (let i = 0; i < Math.min(15, records.length); i++) {
     const row = records[i].map(c => String(c).toLowerCase().trim());
+    if (row.length > MAX_CSV_COLS) {
+      return { error: `CSV exceeds maximum limit of ${MAX_CSV_COLS} columns per row.`, results: [] };
+    }
     const hasDate = row.some(c => /date|txn/i.test(c));
     const hasDesc = row.some(c => /description|narration|particular|remark|detail/i.test(c));
     if (hasDate && hasDesc) {
@@ -103,7 +129,7 @@ export function importCSV(csvContent) {
     headerIndex = 0;
   }
 
-  const headers = records[headerIndex].map(h => String(h).trim());
+  const headers = records[headerIndex].map(h => sanitizeCsvField(h));
   const dataRows = records.slice(headerIndex + 1);
 
   // Find matching bank format
@@ -120,7 +146,9 @@ export function importCSV(csvContent) {
   }
 
   const results = [];
-  for (const row of dataRows) {
+  for (const rawRow of dataRows) {
+    if (rawRow.length > MAX_CSV_COLS) continue;
+    const row = rawRow.map(c => sanitizeCsvField(c));
     const parsedDate = parseCSVDate(row[dateCol]);
     if (!parsedDate) continue; // skip invalid dates (helps filter summary/footer rows)
     if (!row[descCol]) continue; // skip if description is empty
