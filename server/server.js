@@ -1,5 +1,6 @@
 import './loadEnv.js';
-import express from 'express';
+import cookieParser from 'cookie-parser';
+app.use(cookieParser());
 import os from 'os';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
@@ -14,6 +15,7 @@ import rateLimit from 'express-rate-limit';
 import { handleAiChat, generateMonthlyReport, confirmPendingAction, getPendingAction } from './aiAdvisor.js';
 import { getAppKey, encrypt, decrypt } from './crypto.js';
 import { validatePassword } from './passwordValidator.js';
+import { revokeToken, isTokenRevoked } from './redisClient.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -54,7 +56,15 @@ const apiLimiter = rateLimit({
 
 // Security headers
 app.use(helmet({
-  contentSecurityPolicy: false, // Allows Vite client scripts in unified dev/demo deployment
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:"],
+      connectSrc: ["'self'"]
+    }
+  },
   crossOriginEmbedderPolicy: false
 }));
 
@@ -65,11 +75,11 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS
   : defaultOrigins;
 
 app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
-      callback(new Error(`CORS blocked for origin: ${origin}`));
+      callback(new Error('CORS blocked for origin: ' + origin));
     }
   },
   credentials: true,
@@ -97,16 +107,35 @@ const upload = multer({
 });
 
 // Auth middleware with revocation check
-const auth = (req, res, next) => {
+const auth = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
+  const tokenFromHeader = authHeader && authHeader.split(' ')[1];
+  const token = tokenFromHeader || req.cookies?.sw_token;
+  if (!token) return res.status(401).json({ error: 'Authentication token missing' });
+
+  // Check Redis blacklist
+  const revoked = await isTokenRevoked(token);
+  if (revoked) {
+    return res.status(401).json({ error: 'Token has been revoked. Please log in again.' });
+  }
+
+  jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'], issuer: 'savewise', audience: 'savewise-client' }, (err, user) => {
+    if (err) return res.status(403).json({ error: 'Invalid or expired token' });
+    req.user = user;
+    req.rawToken = token;
+    next();
+  });
+};
+  const authHeader = req.headers['authorization'];
+  const tokenFromHeader = authHeader && authHeader.split(' ')[1];
+  const token = tokenFromHeader || req.cookies?.sw_token;
   if (!token) return res.status(401).json({ error: 'Authentication token missing' });
 
   if (tokenBlacklist.has(token)) {
     return res.status(401).json({ error: 'Token has been revoked. Please log in again.' });
   }
 
-  jwt.verify(token, JWT_SECRET, (err, user) => {
+  jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'], issuer: 'savewise', audience: 'savewise-client' }, (err, user) => {
     if (err) return res.status(403).json({ error: 'Invalid or expired token' });
     req.user = user;
     req.rawToken = token;
@@ -143,8 +172,15 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Invalid email or password' });
       
     // 1-hour access token with refresh capability
-    const token = jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: '1h' });
-    res.json({ token, user: { id: user.id, email: user.email, name: user.name } });
+      const token = jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: '1h' });
+      // Set HttpOnly secure cookie
+      res.cookie('sw_token', token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 3600 * 1000 // 1 hour
+      });
+      res.json({ user: { id: user.id, email: user.email, name: user.name } });
   } catch (e) { res.status(500).json({ error: 'Login failed. Please try again.' }); }
 });
 
@@ -155,15 +191,10 @@ app.post('/api/auth/refresh', auth, (req, res) => {
 });
 
 // Logout endpoint with token revocation
-app.post('/api/auth/logout', auth, (req, res) => {
+app.post('/api/auth/logout', auth, async (req, res) => {
   if (req.rawToken) {
-    tokenBlacklist.add(req.rawToken);
-    // Cleanup blacklist memory periodically (capped at 5000 tokens)
-    if (tokenBlacklist.size > 5000) {
-      const items = Array.from(tokenBlacklist);
-      tokenBlacklist.clear();
-      items.slice(2500).forEach(t => tokenBlacklist.add(t));
-    }
+    // Revoke token in Redis for distributed logout
+    await revokeToken(req.rawToken);
   }
   res.json({ success: true, message: 'Logged out successfully and token revoked.' });
 });

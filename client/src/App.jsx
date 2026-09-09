@@ -11,7 +11,7 @@ import BankSync from './components/BankSync';
 import { X, Menu, Wallet } from 'lucide-react';
 
 export default function App() {
-  const [token, setToken] = useState(localStorage.getItem('sw_token') || '');
+  const [token, setToken] = useState('');
   const [user, setUser] = useState(null);
   const [tab, setTab] = useState('dashboard');
   const [categories, setCategories] = useState([]);
@@ -32,8 +32,22 @@ export default function App() {
     }
   }, [token]);
 
-  const login = (t, u) => { localStorage.setItem('sw_token', t); setToken(t); setUser(u); };
-  const logout = () => { localStorage.removeItem('sw_token'); setToken(''); setUser(null); setCategories([]); };
+  const login = (t, u) => {
+    // Store token in memory only; do not persist in localStorage to avoid XSS theft
+    setToken(t);
+    setUser(u);
+  };
+
+  const logout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch (e) {
+      console.error('Logout request failed', e);
+    }
+    setToken('');
+    setUser(null);
+    setCategories([]);
+  };
   const toast = (t) => { setToasts(p => [...p, t]); setTimeout(() => setToasts(p => p.filter(x => x.id !== t.id)), 5000); };
 
   const content = () => {
