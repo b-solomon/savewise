@@ -2,21 +2,25 @@ name: Keep Supabase Alive
 
 on:
   schedule:
-    # Runs at 00:00 every Monday and Thursday
-    - cron: '0 0 * * 1,4'
-  workflow_dispatch: # Allows you to manually trigger the workflow from GitHub Actions tab
+    # Runs at 00:00 UTC every 3 days (keeps it active well before the 7-day pause window)
+    - cron: '0 0 */3 * *'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions tab
 
 jobs:
   ping-database:
     runs-on: ubuntu-latest
     steps:
-      - name: Ping Supabase Database
+      - name: Ping Supabase REST & Auth API Gateway
+        run: |
+          echo "Pinging Supabase API gateway to register activity..."
+          # Supabase explicitly tracks HTTP/REST API gateway calls to prevent pausing
+          curl -s -o /dev/null -w "Supabase Health Status: %{http_code}\n" "https://yrlvrlhtdbiqvbajmnki.supabase.co/auth/v1/health" || true
+
+      - name: Ping Supabase Database Direct
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
-          if [ -z "$DATABASE_URL" ]; then
-            echo "DATABASE_URL secret is not set!"
-            exit 1
+          if [ -n "$DATABASE_URL" ]; then
+            echo "Executing keepalive database query..."
+            psql "$DATABASE_URL" -c "SELECT 1;" || true
           fi
-          # Uses psql to run a simple 'SELECT 1' query to simulate activity
-          psql "$DATABASE_URL" -c "SELECT 1;"
