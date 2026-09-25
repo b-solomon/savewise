@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { query } from './database.js';
+import { getAppKey, encrypt, decrypt } from './crypto.js';
 
 let openaiInstance = null;
 let openrouterInstance = null;
@@ -33,16 +34,29 @@ function getOpenRouterClient() {
 
 
 async function buildContext(userId, month) {
-  const txns = await query.all('SELECT type, amount, category, merchant, date FROM transactions WHERE user_id = ? AND date LIKE ?', [userId, month + '%']);
+  const txns = await query.all('SELECT type, amount, amount_enc, category, merchant, merchant_enc, date FROM transactions WHERE user_id = ? AND date LIKE ?', [userId, month + '%']);
   const budgets = await query.all('SELECT category, monthly_limit FROM budgets WHERE user_id = ?', [userId]);
   const goals = await query.all('SELECT name, target_amount, current_amount, deadline FROM savings_goals WHERE user_id = ?', [userId]);
   const holdings = await query.all('SELECT symbol, exchange, quantity, avg_buy_price FROM holdings WHERE user_id = ?', [userId]);
 
   let totalIncome = 0, totalExpenses = 0;
   const catSpend = {};
+  const key = getAppKey();
+
   txns.forEach(t => {
-    if (t.type === 'income') totalIncome += t.amount;
-    else { totalExpenses += t.amount; catSpend[t.category] = (catSpend[t.category] || 0) + t.amount; }
+    let amt = 0;
+    if (t.amount_enc) {
+      amt = parseFloat(decrypt(t.amount_enc, key)) || 0;
+    } else {
+      amt = parseFloat(t.amount) || 0;
+    }
+
+    if (t.type === 'income') {
+      totalIncome += amt;
+    } else {
+      totalExpenses += amt;
+      catSpend[t.category] = (catSpend[t.category] || 0) + amt;
+    }
   });
 
   return {
@@ -129,10 +143,11 @@ export async function confirmPendingAction(actionId, userId) {
       resultMessage = `Confirmed and added ${quantity} shares of ${sym} at ₹${avgBuyPrice} to your portfolio.`;
     } else if (item.type === 'add_transaction') {
       const { type, amount, category, desc, merchant, date, method } = item.data;
+      const key = getAppKey();
       await query.run(
-        `INSERT INTO transactions (user_id, type, amount, category, description, merchant, date, payment_method, source) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [userId, type, amount, category, desc, merchant, date, method, 'ai_confirmed']
+        `INSERT INTO transactions (user_id, type, amount, amount_enc, category, description, merchant, merchant_enc, date, payment_method, source) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, type, 0, encrypt(String(amount), key), category, desc, '', encrypt(merchant || '', key), date, method, 'ai_confirmed']
       );
       resultMessage = `Confirmed and added ${type} transaction of ₹${amount} under ${category}.`;
     }

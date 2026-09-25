@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Sparkles, FileText, X } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
+import rehypeSanitize from 'rehype-sanitize';
 const TIPS = ['Where can I cut spending?','Am I on track for my savings goals?','Analyze my spending this month','How can I save ₹5000 more?','Review my stock portfolio','Which budget am I exceeding?'];
 
 export default function AiAdvisor({ token, user }) {
@@ -51,17 +53,15 @@ export default function AiAdvisor({ token, user }) {
     finally { setLoading(false); }
   };
 
-  const fmt = (t) => {
-    if (!t) return '';
-    return t.replace(/\*\*(.*?)\*\*/g,'<strong class="text-white">$1</strong>').replace(/\n- /g,'\n• ').replace(/\n/g,'<br/>');
-  };
-
   return (
     <div className="flex-1 flex flex-col max-h-screen">
       <div className="p-5 border-b border-white/5 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-xl bg-gradient-to-tr from-accent to-savings"><Sparkles className="h-5 w-5 text-white" /></div>
-          <div><h2 className="text-base font-display font-bold text-white">SaveWise AI Advisor</h2><p className="text-[10px] text-gray-500">Powered by your real spending & portfolio data</p></div>
+          <div>
+            <h2 className="text-base font-display font-bold text-white">SaveWise AI Advisor</h2>
+            <p className="text-[10px] text-gray-500">Privacy-first • Analyzes pre-aggregated monthly summaries only</p>
+          </div>
         </div>
         <div className="flex gap-2">
           {msgs.length > 0 && (
@@ -71,6 +71,11 @@ export default function AiAdvisor({ token, user }) {
           )}
           <button onClick={getReport} disabled={loading} className="px-3 py-1.5 rounded-lg glass text-[10px] text-gray-300 hover:text-white font-medium cursor-pointer flex items-center gap-1.5"><FileText className="h-3 w-3" />Monthly Report</button>
         </div>
+      </div>
+
+      {/* AI Privacy Boundary Disclosure */}
+      <div className="px-5 py-2 bg-savings/5 border-b border-white/5 text-[10px] text-gray-400 flex items-center justify-between">
+        <span>🛡️ <strong>Zero-Knowledge AI Boundary:</strong> Only aggregated category totals are shared. Raw SMS, bank credentials, and individual ledger rows remain client/server encrypted.</span>
       </div>
 
       <div className="flex-1 overflow-y-auto p-5 space-y-3">
@@ -89,7 +94,7 @@ export default function AiAdvisor({ token, user }) {
               <button onClick={() => setReport(null)} className="p-1 rounded-lg text-gray-400 hover:text-white cursor-pointer hover:bg-white/5"><X className="h-3.5 w-3.5" /></button>
             </div>
             {report.error ? <p className="text-expense text-xs">{report.error}</p> :
-            <div className="text-xs text-gray-300 leading-relaxed" dangerouslySetInnerHTML={{__html:fmt(report.report||'')}} />}
+            <ReactMarkdown rehypePlugins={[rehypeSanitize]} className="text-xs text-gray-300 leading-relaxed whitespace-pre-wrap">{report.report || ''}</ReactMarkdown>}
             {report.savingsRate!=null && <div className="mt-3 text-[10px] text-gray-500">Savings Rate: {report.savingsRate}%</div>}
           </div>
         )}
@@ -99,7 +104,7 @@ export default function AiAdvisor({ token, user }) {
             <div className={`max-w-[75%] rounded-2xl px-4 py-2.5 text-xs leading-relaxed ${m.sender==='user'?'bg-savings/12 text-white rounded-br-md':'glass text-gray-300 rounded-bl-md'}`}>
               {m.sender==='user' ? m.text : (
                 <div>
-                <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{{m.text}}</ReactMarkdown>
+                 <ReactMarkdown rehypePlugins={[rehypeSanitize]}>{m.text}</ReactMarkdown>
                   {m.pendingAction && !m.confirmed && (
                     <div className="mt-3 pt-2 border-t border-white/10 flex items-center gap-2">
                       <button 

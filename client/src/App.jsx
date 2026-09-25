@@ -18,15 +18,31 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [phoneUrl, setPhoneUrl] = useState('');
+  const [checkingAuth, setCheckingAuth] = useState(true);
+
+  // Auto-restore session from secure HttpOnly cookie on page load
+  useEffect(() => {
+    fetch('/api/auth/me', { credentials: 'include' })
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(u => {
+        if (u && u.id) {
+          setUser(u);
+          setToken('cookie_authenticated');
+        }
+      })
+      .catch(() => {})
+      .finally(() => setCheckingAuth(false));
+  }, []);
 
   useEffect(() => {
     if (token) {
-      fetch('/api/auth/me', { headers: { Authorization: `Bearer ${token}` } })
+      const headers = token !== 'cookie_authenticated' ? { Authorization: `Bearer ${token}` } : {};
+      fetch('/api/auth/me', { headers, credentials: 'include' })
         .then(r => { if (!r.ok) throw new Error(); return r.json(); })
         .then(u => { 
           setUser(u); 
-          fetch('/api/categories', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()).then(d => { if (Array.isArray(d)) setCategories(d); });
-          fetch('/api/system/ip', { headers: { Authorization: `Bearer ${token}` } }).then(r => r.json()).then(d => { if (d.ip && d.ip !== 'localhost') setPhoneUrl(`http://${d.ip}:3001`); });
+          fetch('/api/categories', { headers, credentials: 'include' }).then(r => r.json()).then(d => { if (Array.isArray(d)) setCategories(d); });
+          fetch('/api/system/ip', { headers, credentials: 'include' }).then(r => r.json()).then(d => { if (d.ip && d.ip !== 'localhost') setPhoneUrl(`http://${d.ip}:3001`); });
         })
         .catch(() => logout());
     }
@@ -34,7 +50,7 @@ export default function App() {
 
   const login = (t, u) => {
     // Store token in memory only; do not persist in localStorage to avoid XSS theft
-    setToken(t);
+    setToken(t || 'cookie_authenticated');
     setUser(u);
   };
 
@@ -66,6 +82,14 @@ export default function App() {
       default: return <Dashboard token={token} />;
     }
   };
+
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#060710] text-gray-400">
+        <div className="w-8 h-8 rounded-full border-2 border-savings border-t-transparent animate-spin" />
+      </div>
+    );
+  }
 
   if (!token || !user) return <Login onLoginSuccess={login} />;
 

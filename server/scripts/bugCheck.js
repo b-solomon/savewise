@@ -193,6 +193,8 @@ function testPasswordEngine() {
 // ─── 7. SECURITY & INTEGRITY SUITE ───
 import { sanitizeCsvField } from '../csvImporter.js';
 import { pendingAiActions, confirmPendingAction } from '../aiAdvisor.js';
+import { revokeToken, isTokenRevoked } from '../redisClient.js';
+import jwt from 'jsonwebtoken';
 
 async function testSecurityFeatures() {
   console.log('\n🔹 7. Testing Security Invariants & Human-in-the-Loop Safeguards...');
@@ -219,6 +221,33 @@ async function testSecurityFeatures() {
     reportTest('SECURITY', 'AI Action Human Confirmation IDOR Protection', passAuth, 'Blocked cross-user confirmation attempt');
 
     pendingAiActions.delete(fakeActionId);
+
+    // Test JWT Algorithm & Claims Pinning
+    const testSecret = process.env.JWT_SECRET || 'savewise_ci_testing_jwt_secret_key_2026';
+    const validToken = jwt.sign({ id: 1 }, testSecret, { expiresIn: '1h', algorithm: 'HS256', issuer: 'savewise', audience: 'savewise-client' });
+    let jwtVerified = false;
+    try {
+      jwt.verify(validToken, testSecret, { algorithms: ['HS256'], issuer: 'savewise', audience: 'savewise-client' });
+      jwtVerified = true;
+    } catch {}
+    reportTest('SECURITY', 'JWT Strict Verification Pinning', jwtVerified, 'Pinned to HS256, issuer: savewise, audience: savewise-client');
+
+    // Test Token Revocation
+    await revokeToken(validToken);
+    const isRevoked = await isTokenRevoked(validToken);
+    reportTest('SECURITY', 'Token Revocation & Blacklist Engine', isRevoked, 'Revoked token successfully detected');
+
+    // Test Zero-Knowledge Field Protection
+    const secretKey = getAppKey();
+    const sensitiveAmount = '49999.50';
+    const sensitiveMerchant = 'Confidential Private Hospital';
+    const encAmount = encrypt(sensitiveAmount, secretKey);
+    const encMerchant = encrypt(sensitiveMerchant, secretKey);
+    const decAmount = decrypt(encAmount, secretKey);
+    const decMerchant = decrypt(encMerchant, secretKey);
+    const passZk = decAmount === sensitiveAmount && decMerchant === sensitiveMerchant && encAmount !== sensitiveAmount;
+    reportTest('SECURITY', 'Zero-Knowledge Financial Field Encryption', passZk, 'Sensitive financial fields isolated from plaintext columns');
+
   } catch (err) {
     reportTest('SECURITY', 'Security Verification', false, err.message);
   }

@@ -1,6 +1,6 @@
 import './loadEnv.js';
+import express from 'express';
 import cookieParser from 'cookie-parser';
-app.use(cookieParser());
 import os from 'os';
 import cors from 'cors';
 import jwt from 'jsonwebtoken';
@@ -18,6 +18,7 @@ import { validatePassword } from './passwordValidator.js';
 import { revokeToken, isTokenRevoked } from './redisClient.js';
 
 const app = express();
+app.use(cookieParser());
 const PORT = process.env.PORT || 4000;
 
 // Mandatory JWT_SECRET validation (no insecure fallback)
@@ -27,8 +28,7 @@ if (!JWT_SECRET || JWT_SECRET.length < 16) {
   process.exit(1);
 }
 
-// In-memory token blacklist for revocation / logout
-const tokenBlacklist = new Set();
+// Token blacklist moved to Redis revocation (see redisClient.js)
 
 // Rate limiters
 const authLimiter = rateLimit({
@@ -110,28 +110,14 @@ const upload = multer({
 const auth = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const tokenFromHeader = authHeader && authHeader.split(' ')[1];
-  const token = tokenFromHeader || req.cookies?.sw_token;
+  const token = (tokenFromHeader && tokenFromHeader !== 'cookie_authenticated')
+    ? tokenFromHeader
+    : req.cookies?.sw_token;
   if (!token) return res.status(401).json({ error: 'Authentication token missing' });
 
-  // Check Redis blacklist
+  // Check Redis / in-memory blacklist
   const revoked = await isTokenRevoked(token);
   if (revoked) {
-    return res.status(401).json({ error: 'Token has been revoked. Please log in again.' });
-  }
-
-  jwt.verify(token, JWT_SECRET, { algorithms: ['HS256'], issuer: 'savewise', audience: 'savewise-client' }, (err, user) => {
-    if (err) return res.status(403).json({ error: 'Invalid or expired token' });
-    req.user = user;
-    req.rawToken = token;
-    next();
-  });
-};
-  const authHeader = req.headers['authorization'];
-  const tokenFromHeader = authHeader && authHeader.split(' ')[1];
-  const token = tokenFromHeader || req.cookies?.sw_token;
-  if (!token) return res.status(401).json({ error: 'Authentication token missing' });
-
-  if (tokenBlacklist.has(token)) {
     return res.status(401).json({ error: 'Token has been revoked. Please log in again.' });
   }
 
@@ -158,7 +144,14 @@ app.post('/api/auth/register', authLimiter, async (req, res) => {
     const r = await query.run('INSERT INTO users (email, password_hash, name) VALUES (?,?,?)', [email, hash, name || '']);
     
     // Short-lived access token + user payload
-    const token = jwt.sign({ id: r.id, email, name }, JWT_SECRET, { expiresIn: '1h' });
+    const token = jwt.sign({ id: r.id, email, name }, JWT_SECRET, { expiresIn: '1h', algorithm: 'HS256', issuer: 'savewise', audience: 'savewise-client' });
+    // Set HttpOnly secure cookie
+    res.cookie('sw_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 3600 * 1000
+    });
     res.status(201).json({ token, user: { id: r.id, email, name } });
   } catch (e) { res.status(500).json({ error: 'Registration failed. Please try again.' }); }
 });
@@ -172,22 +165,28 @@ app.post('/api/auth/login', authLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Invalid email or password' });
       
     // 1-hour access token with refresh capability
-      const token = jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: '1h' });
-      // Set HttpOnly secure cookie
-      res.cookie('sw_token', token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict',
-        maxAge: 3600 * 1000 // 1 hour
-      });
-      res.json({ user: { id: user.id, email: user.email, name: user.name } });
+    const token = jwt.sign({ id: user.id, email: user.email, name: user.name }, JWT_SECRET, { expiresIn: '1h', algorithm: 'HS256', issuer: 'savewise', audience: 'savewise-client' });
+    // Set HttpOnly secure cookie
+    res.cookie('sw_token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 3600 * 1000 // 1 hour
+    });
+    res.json({ token, user: { id: user.id, email: user.email, name: user.name } });
   } catch (e) { res.status(500).json({ error: 'Login failed. Please try again.' }); }
 });
 
 // Refresh token route
 app.post('/api/auth/refresh', auth, (req, res) => {
-  const newToken = jwt.sign({ id: req.user.id, email: req.user.email, name: req.user.name }, JWT_SECRET, { expiresIn: '1h' });
-  res.json({ token: newToken, user: req.user });
+  const newToken = jwt.sign({ id: req.user.id, email: req.user.email, name: req.user.name }, JWT_SECRET, { expiresIn: '1h', algorithm: 'HS256', issuer: 'savewise', audience: 'savewise-client' });
+  res.cookie('sw_token', newToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 3600 * 1000
+  });
+  res.json({ user: req.user });
 });
 
 // Logout endpoint with token revocation
@@ -196,6 +195,8 @@ app.post('/api/auth/logout', auth, async (req, res) => {
     // Revoke token in Redis for distributed logout
     await revokeToken(req.rawToken);
   }
+  // Clear HttpOnly cookie
+  res.clearCookie('sw_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict' });
   res.json({ success: true, message: 'Logged out successfully and token revoked.' });
 });
 
@@ -223,7 +224,7 @@ app.post('/api/transactions/parse-sms', auth, async (req, res) => {
     const key = getAppKey();
     const r = await query.run(
       'INSERT INTO transactions (user_id,type,amount,amount_enc,category,description,merchant,merchant_enc,date,payment_method,source,raw_sms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-      [req.user.id, p.type, p.amount, encrypt(String(p.amount), key), p.category, p.description, p.merchant, encrypt(p.merchant, key), p.date, p.paymentMethod, 'sms', encrypt(p.raw, key)]
+      [req.user.id, p.type, 0, encrypt(String(p.amount), key), p.category, p.description, '', encrypt(p.merchant, key), p.date, p.paymentMethod, 'sms', encrypt(p.raw, key)]
     );
     res.status(201).json({ id: r.id, ...p });
   } catch (e) { console.error(e); res.status(500).json({ error: 'Parse failed' }); }
@@ -241,7 +242,7 @@ app.post('/api/transactions/bulk-parse', auth, async (req, res) => {
     try {
       const r = await query.run(
         'INSERT INTO transactions (user_id,type,amount,amount_enc,category,description,merchant,merchant_enc,date,payment_method,source,raw_sms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-        [req.user.id, p.type, p.amount, encrypt(String(p.amount), key), p.category, p.description, p.merchant, encrypt(p.merchant, key), p.date, p.paymentMethod, 'sms', encrypt(p.raw, key)]
+        [req.user.id, p.type, 0, encrypt(String(p.amount), key), p.category, p.description, '', encrypt(p.merchant, key), p.date, p.paymentMethod, 'sms', encrypt(p.raw, key)]
       );
       results.push({ id: r.id, ...p });
     } catch (e) { results.push({ ...p, error: 'Save failed' }); }
@@ -261,7 +262,7 @@ app.post('/api/transactions/import-csv', auth, upload.single('file'), async (req
       try {
         await query.run(
           'INSERT INTO transactions (user_id,type,amount,amount_enc,category,description,merchant,merchant_enc,date,payment_method,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-          [req.user.id, r.type, r.amount, encrypt(String(r.amount), key), r.category, r.description, r.merchant, encrypt(r.merchant, key), r.date, r.paymentMethod, 'csv']
+          [req.user.id, r.type, 0, encrypt(String(r.amount), key), r.category, r.description, '', encrypt(r.merchant, key), r.date, r.paymentMethod, 'csv']
         );
         success++;
       } catch (e) { /* skip duplicates */ }
@@ -282,14 +283,17 @@ app.get('/api/transactions', auth, async (req, res) => {
     const rows = await query.all(sql, params);
     const key = getAppKey();
     const sanitizedRows = rows.map(r => {
-      let finalAmount = r.amount;
-      if ((!finalAmount || finalAmount === 0) && r.amount_enc) {
-        finalAmount = decrypt(r.amount_enc, key);
-        finalAmount = parseFloat(finalAmount) || 0;
+      let finalAmount = 0;
+      if (r.amount_enc) {
+        finalAmount = parseFloat(decrypt(r.amount_enc, key)) || 0;
+      } else {
+        finalAmount = parseFloat(r.amount) || 0;
       }
-      let finalMerchant = r.merchant;
-      if (!finalMerchant && r.merchant_enc) {
+      let finalMerchant = '';
+      if (r.merchant_enc) {
         finalMerchant = decrypt(r.merchant_enc, key);
+      } else {
+        finalMerchant = r.merchant || '';
       }
       return {
         ...r,
@@ -304,15 +308,45 @@ app.get('/api/transactions', auth, async (req, res) => {
 
 app.post('/api/transactions', auth, async (req, res) => {
   const { type, amount, category, description, merchant, date, paymentMethod } = req.body;
-  if (!type || !amount || !category || !date) return res.status(400).json({ error: 'type, amount, category, date required' });
+  if (!type || !amount || !category || !date) {
+    return res.status(400).json({ error: 'type, amount, category, and date are required.' });
+  }
+
+  // Strict Validation: type
+  if (type !== 'income' && type !== 'expense') {
+    return res.status(400).json({ error: "Transaction type must be 'income' or 'expense'." });
+  }
+
+  // Strict Validation: amount
+  const parsedAmount = parseFloat(amount);
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || parsedAmount > 100000000) {
+    return res.status(400).json({ error: 'Amount must be a positive finite number (max ₹10 Cr).' });
+  }
+
+  // Strict Validation: category
+  if (typeof category !== 'string' || category.trim().length === 0 || category.length > 50) {
+    return res.status(400).json({ error: 'Valid category is required (1-50 characters).' });
+  }
+
+  // Strict Validation: date (YYYY-MM-DD calendar date)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(Date.parse(date))) {
+    return res.status(400).json({ error: 'Valid date in YYYY-MM-DD format is required.' });
+  }
+
+  const cleanCategory = category.trim();
+  const cleanDesc = (description || '').slice(0, 200);
+  const cleanMerchant = (merchant || '').slice(0, 100);
+  const cleanMethod = (paymentMethod || 'Other').slice(0, 50);
+
   try {
     const key = getAppKey();
+    // Zero-knowledge: plaintext amount is stored as 0, plaintext merchant as empty
     const r = await query.run(
       'INSERT INTO transactions (user_id,type,amount,amount_enc,category,description,merchant,merchant_enc,date,payment_method,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-      [req.user.id, type, parseFloat(amount), encrypt(String(amount), key), category, description || '', merchant || '', encrypt(merchant || '', key), date, paymentMethod || 'Other', 'manual']
+      [req.user.id, type, 0, encrypt(String(parsedAmount), key), cleanCategory, cleanDesc, '', encrypt(cleanMerchant, key), date, cleanMethod, 'manual']
     );
-    res.status(201).json({ id: r.id, type, amount: parseFloat(amount), category, description, merchant, date, paymentMethod, source: 'manual' });
-  } catch (e) { res.status(500).json({ error: 'Failed' }); }
+    res.status(201).json({ id: r.id, type, amount: parsedAmount, category: cleanCategory, description: cleanDesc, merchant: cleanMerchant, date, paymentMethod: cleanMethod, source: 'manual' });
+  } catch (e) { res.status(500).json({ error: 'Failed to record transaction.' }); }
 });
 
 app.delete('/api/transactions/:id', auth, async (req, res) => {
@@ -352,13 +386,13 @@ app.post('/api/sync/simulate', auth, async (req, res) => {
     let imported = 0;
     for (const t of mockTxns) {
       const exists = await query.get(
-        'SELECT id FROM transactions WHERE user_id = ? AND amount = ? AND merchant = ? AND date = ?',
-        [req.user.id, t.amount, t.merchant, t.date]
+        'SELECT id FROM transactions WHERE user_id = ? AND date = ? AND description = ?',
+        [req.user.id, t.date, t.description]
       );
       if (!exists) {
         await query.run(
           'INSERT INTO transactions (user_id,type,amount,amount_enc,category,description,merchant,merchant_enc,date,payment_method,source) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-          [req.user.id, t.type, t.amount, encrypt(String(t.amount), key), t.category, t.description, t.merchant, encrypt(t.merchant, key), t.date, t.paymentMethod, 'sync']
+          [req.user.id, t.type, 0, encrypt(String(t.amount), key), t.category, t.description, '', encrypt(t.merchant, key), t.date, t.paymentMethod, 'sync']
         );
         imported++;
       }
@@ -383,11 +417,24 @@ app.get('/api/dashboard/summary', auth, async (req, res) => {
     let totalIncome = 0, totalExpenses = 0;
     const catTotals = {}, dailyMap = {};
     const key = getAppKey();
-    txns.forEach(t => {
-      let amt = t.amount;
-      if ((!amt || amt === 0) && t.amount_enc) {
+    const decryptedTxns = txns.map(t => {
+      let amt = 0;
+      if (t.amount_enc) {
         amt = parseFloat(decrypt(t.amount_enc, key)) || 0;
+      } else {
+        amt = parseFloat(t.amount) || 0;
       }
+      let mer = '';
+      if (t.merchant_enc) {
+        mer = decrypt(t.merchant_enc, key);
+      } else {
+        mer = t.merchant || '';
+      }
+      return { ...t, amount: amt, merchant: mer };
+    });
+
+    decryptedTxns.forEach(t => {
+      const amt = t.amount;
       if (t.type === 'income') totalIncome += amt; else totalExpenses += amt;
       if (t.type === 'expense') catTotals[t.category] = (catTotals[t.category] || 0) + amt;
       if (!dailyMap[t.date]) dailyMap[t.date] = { date: t.date, income: 0, expense: 0 };
@@ -414,7 +461,7 @@ app.get('/api/dashboard/summary', auth, async (req, res) => {
       month, totalIncome: Math.round(totalIncome * 100) / 100, totalExpenses: Math.round(totalExpenses * 100) / 100,
       balance: Math.round((totalIncome - totalExpenses) * 100) / 100, categoryBreakdown,
       dailyTrend: Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date)),
-      recentTransactions: txns.slice(0, 10), transactionCount: txns.length,
+      recentTransactions: decryptedTxns.slice(0, 10), transactionCount: decryptedTxns.length,
       portfolioValue: Math.round(portfolioValue), portfolioInvested: Math.round(portfolioInvested),
       portfolioPnl: Math.round(portfolioValue - portfolioInvested), holdingsCount: holdings.length
     });
@@ -433,25 +480,55 @@ app.get('/api/holdings', auth, async (req, res) => {
 
 app.post('/api/holdings', auth, async (req, res) => {
   const { symbol, name, exchange, quantity, avgBuyPrice, buyDate, assetType } = req.body;
-  if (!symbol || !quantity || !avgBuyPrice) return res.status(400).json({ error: 'symbol, quantity, avgBuyPrice required' });
+  if (!symbol || quantity === undefined || avgBuyPrice === undefined) {
+    return res.status(400).json({ error: 'symbol, quantity, and avgBuyPrice are required.' });
+  }
+
+  // Strict Validation: Stock Symbol
+  const cleanSym = String(symbol).toUpperCase().trim();
+  if (!cleanSym || !/^[A-Z0-9.-]{1,15}$/.test(cleanSym)) {
+    return res.status(400).json({ error: 'Invalid stock symbol format (1-15 uppercase alphanumeric chars).' });
+  }
+
+  // Strict Validation: Quantity
+  const parsedQty = parseFloat(quantity);
+  if (!Number.isFinite(parsedQty) || parsedQty <= 0 || parsedQty > 10000000) {
+    return res.status(400).json({ error: 'Quantity must be a positive finite number (max 10,000,000).' });
+  }
+
+  // Strict Validation: Average Buy Price
+  const parsedPrice = parseFloat(avgBuyPrice);
+  if (!Number.isFinite(parsedPrice) || parsedPrice <= 0 || parsedPrice > 100000000) {
+    return res.status(400).json({ error: 'Average buy price must be a positive finite number (max ₹10 Cr).' });
+  }
+
+  const cleanExchange = ['NSE', 'BSE', 'US'].includes(exchange) ? exchange : 'NSE';
+  const cleanDate = (buyDate && /^\d{4}-\d{2}-\d{2}$/.test(buyDate) && !isNaN(Date.parse(buyDate)))
+    ? buyDate
+    : new Date().toISOString().split('T')[0];
+  const cleanName = (name || `${cleanSym} Stock`).slice(0, 100);
+  const cleanType = (assetType || 'stock').slice(0, 30);
+
   try {
     const r = await query.run(
       'INSERT INTO holdings (user_id,symbol,name,exchange,quantity,avg_buy_price,buy_date,asset_type,source) VALUES (?,?,?,?,?,?,?,?,?)',
-      [req.user.id, symbol.toUpperCase(), name || '', exchange || 'NSE', parseFloat(quantity), parseFloat(avgBuyPrice), buyDate || new Date().toISOString().split('T')[0], assetType || 'stock', 'manual']
+      [req.user.id, cleanSym, cleanName, cleanExchange, parsedQty, parsedPrice, cleanDate, cleanType, 'manual']
     );
-    res.status(201).json({ id: r.id, symbol: symbol.toUpperCase(), quantity: parseFloat(quantity), avg_buy_price: parseFloat(avgBuyPrice) });
-  } catch (e) { res.status(500).json({ error: 'Failed' }); }
+    res.status(201).json({ id: r.id, symbol: cleanSym, name: cleanName, exchange: cleanExchange, quantity: parsedQty, avg_buy_price: parsedPrice, buy_date: cleanDate });
+  } catch (e) { res.status(500).json({ error: 'Failed to record holding.' }); }
 });
 
 app.delete('/api/holdings/:id', auth, async (req, res) => {
-  try { await query.run('DELETE FROM holdings WHERE id=? AND user_id=?', [parseInt(req.params.id, 10), req.user.id]); res.json({ message: 'Deleted' }); }
+  const holdingId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(holdingId) || holdingId <= 0) return res.status(400).json({ error: 'Invalid holding ID' });
+  try { await query.run('DELETE FROM holdings WHERE id=? AND user_id=?', [holdingId, req.user.id]); res.json({ message: 'Deleted' }); }
   catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
 
 app.get('/api/holdings/search', auth, async (req, res) => {
   const { q } = req.query;
-  if (!q || q.length < 1) return res.json([]);
-  try { res.json(await searchSymbol(q)); }
+  if (!q || typeof q !== 'string' || q.trim().length < 1 || q.length > 50) return res.json([]);
+  try { res.json(await searchSymbol(q.trim())); }
   catch (e) { res.json([]); }
 });
 
@@ -463,15 +540,29 @@ app.get('/api/budgets', auth, async (req, res) => {
 
 app.post('/api/budgets', auth, async (req, res) => {
   const { category, monthlyLimit } = req.body;
-  if (!category || !monthlyLimit) return res.status(400).json({ error: 'Category and limit required' });
+  if (!category || monthlyLimit === undefined) return res.status(400).json({ error: 'Category and limit required.' });
+
+  // Strict Validation: Category
+  if (typeof category !== 'string' || category.trim().length === 0 || category.length > 50) {
+    return res.status(400).json({ error: 'Valid category required (1-50 characters).' });
+  }
+
+  // Strict Validation: Monthly Limit
+  const parsedLimit = parseFloat(monthlyLimit);
+  if (!Number.isFinite(parsedLimit) || parsedLimit <= 0 || parsedLimit > 100000000) {
+    return res.status(400).json({ error: 'Monthly limit must be a positive finite number (max ₹10 Cr).' });
+  }
+
   try {
-    await query.run('INSERT OR REPLACE INTO budgets (user_id,category,monthly_limit) VALUES (?,?,?)', [req.user.id, category, parseFloat(monthlyLimit)]);
-    res.status(201).json({ message: 'Budget set' });
-  } catch (e) { res.status(500).json({ error: 'Failed' }); }
+    await query.run('INSERT OR REPLACE INTO budgets (user_id,category,monthly_limit) VALUES (?,?,?)', [req.user.id, category.trim(), parsedLimit]);
+    res.status(201).json({ message: 'Budget set', category: category.trim(), monthly_limit: parsedLimit });
+  } catch (e) { res.status(500).json({ error: 'Failed to set budget.' }); }
 });
 
 app.delete('/api/budgets/:id', auth, async (req, res) => {
-  try { await query.run('DELETE FROM budgets WHERE id=? AND user_id=?', [parseInt(req.params.id, 10), req.user.id]); res.json({ message: 'Deleted' }); }
+  const budgetId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(budgetId) || budgetId <= 0) return res.status(400).json({ error: 'Invalid budget ID' });
+  try { await query.run('DELETE FROM budgets WHERE id=? AND user_id=?', [budgetId, req.user.id]); res.json({ message: 'Deleted' }); }
   catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
 
@@ -483,24 +574,52 @@ app.get('/api/savings-goals', auth, async (req, res) => {
 
 app.post('/api/savings-goals', auth, async (req, res) => {
   const { name, targetAmount, deadline, icon } = req.body;
-  if (!name || !targetAmount) return res.status(400).json({ error: 'Name and target required' });
+  if (!name || targetAmount === undefined) return res.status(400).json({ error: 'Name and target amount required.' });
+
+  // Strict Validation: Name
+  if (typeof name !== 'string' || name.trim().length === 0 || name.length > 100) {
+    return res.status(400).json({ error: 'Valid goal name required (1-100 characters).' });
+  }
+
+  // Strict Validation: Target Amount
+  const parsedTarget = parseFloat(targetAmount);
+  if (!Number.isFinite(parsedTarget) || parsedTarget <= 0 || parsedTarget > 1000000000) {
+    return res.status(400).json({ error: 'Target amount must be a positive finite number (max ₹100 Cr).' });
+  }
+
+  const cleanDeadline = (deadline && /^\d{4}-\d{2}-\d{2}$/.test(deadline) && !isNaN(Date.parse(deadline)))
+    ? deadline
+    : null;
+  const cleanIcon = (icon && typeof icon === 'string') ? icon.slice(0, 10) : '🎯';
+
   try {
-    const r = await query.run('INSERT INTO savings_goals (user_id,name,target_amount,deadline,icon) VALUES (?,?,?,?,?)', [req.user.id, name, parseFloat(targetAmount), deadline || null, icon || '🎯']);
-    res.status(201).json({ id: r.id, name, target_amount: parseFloat(targetAmount), current_amount: 0, deadline, icon: icon || '🎯' });
-  } catch (e) { res.status(500).json({ error: 'Failed' }); }
+    const r = await query.run(
+      'INSERT INTO savings_goals (user_id,name,target_amount,deadline,icon) VALUES (?,?,?,?,?)',
+      [req.user.id, name.trim(), parsedTarget, cleanDeadline, cleanIcon]
+    );
+    res.status(201).json({ id: r.id, name: name.trim(), target_amount: parsedTarget, current_amount: 0, deadline: cleanDeadline, icon: cleanIcon });
+  } catch (e) { res.status(500).json({ error: 'Failed to create savings goal.' }); }
 });
 
 app.put('/api/savings-goals/:id/contribute', auth, async (req, res) => {
-  const { amount } = req.body;
-  if (!amount || amount <= 0) return res.status(400).json({ error: 'Valid amount required' });
+  const goalId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(goalId) || goalId <= 0) return res.status(400).json({ error: 'Invalid savings goal ID' });
+
+  const parsedAmount = parseFloat(req.body.amount);
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0 || parsedAmount > 100000000) {
+    return res.status(400).json({ error: 'Contribution amount must be a positive finite number (max ₹10 Cr).' });
+  }
+
   try {
-    await query.run('UPDATE savings_goals SET current_amount=current_amount+? WHERE id=? AND user_id=?', [parseFloat(amount), parseInt(req.params.id, 10), req.user.id]);
-    res.json(await query.get('SELECT * FROM savings_goals WHERE id=?', [parseInt(req.params.id, 10)]));
-  } catch (e) { res.status(500).json({ error: 'Failed' }); }
+    await query.run('UPDATE savings_goals SET current_amount=current_amount+? WHERE id=? AND user_id=?', [parsedAmount, goalId, req.user.id]);
+    res.json(await query.get('SELECT * FROM savings_goals WHERE id=?', [goalId]));
+  } catch (e) { res.status(500).json({ error: 'Failed to process contribution.' }); }
 });
 
 app.delete('/api/savings-goals/:id', auth, async (req, res) => {
-  try { await query.run('DELETE FROM savings_goals WHERE id=? AND user_id=?', [parseInt(req.params.id, 10), req.user.id]); res.json({ message: 'Deleted' }); }
+  const goalId = parseInt(req.params.id, 10);
+  if (!Number.isInteger(goalId) || goalId <= 0) return res.status(400).json({ error: 'Invalid savings goal ID' });
+  try { await query.run('DELETE FROM savings_goals WHERE id=? AND user_id=?', [goalId, req.user.id]); res.json({ message: 'Deleted' }); }
   catch (e) { res.status(500).json({ error: 'Failed' }); }
 });
 

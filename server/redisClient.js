@@ -1,8 +1,41 @@
 import Redis from 'ioredis';
 
-const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
-
+let redis = null;
+let redisAvailable = false;
+const inMemoryBlacklist = new Set();
 const REVOKED_TOKENS_SET = 'revoked_tokens';
+
+// Only attempt Redis connection if REDIS_URL is provided, or in production
+if (process.env.REDIS_URL) {
+  try {
+    redis = new Redis(process.env.REDIS_URL, {
+      lazyConnect: true,
+      maxRetriesPerRequest: 1,
+      connectTimeout: 3000,
+      enableOfflineQueue: false,
+      retryStrategy(times) {
+        if (times > 3) return null; // stop retrying after 3 attempts
+        return Math.min(times * 200, 1000);
+      }
+    });
+
+    redis.on('connect', () => {
+      redisAvailable = true;
+      console.log('Connected to Redis for token revocation.');
+    });
+
+    redis.on('error', (err) => {
+      redisAvailable = false;
+      // Silently fall back to memory blacklist - do not crash process
+    });
+
+    redis.connect().catch(() => {
+      redisAvailable = false;
+    });
+  } catch {
+    redisAvailable = false;
+  }
+}
 
 /**
  * Adds a token to the revoked set.
@@ -10,9 +43,15 @@ const REVOKED_TOKENS_SET = 'revoked_tokens';
  */
 export const revokeToken = async (token) => {
   if (!token) return;
-  // Store token; set a TTL to avoid indefinite growth (e.g., 24h)
-  await redis.sadd(REVOKED_TOKENS_SET, token);
-  await redis.expire(REVOKED_TOKENS_SET, 24 * 60 * 60);
+  inMemoryBlacklist.add(token);
+  if (redis && redisAvailable) {
+    try {
+      await redis.sadd(REVOKED_TOKENS_SET, token);
+      await redis.expire(REVOKED_TOKENS_SET, 24 * 60 * 60);
+    } catch {
+      // Memory fallback active
+    }
+  }
 };
 
 /**
@@ -22,13 +61,29 @@ export const revokeToken = async (token) => {
  */
 export const isTokenRevoked = async (token) => {
   if (!token) return false;
-  const result = await redis.sismember(REVOKED_TOKENS_SET, token);
-  return result === 1;
+  if (inMemoryBlacklist.has(token)) return true;
+  if (redis && redisAvailable) {
+    try {
+      const result = await redis.sismember(REVOKED_TOKENS_SET, token);
+      return result === 1;
+    } catch {
+      return inMemoryBlacklist.has(token);
+    }
+  }
+  return false;
 };
 
 /**
- * Clears all revoked tokens (useful for forced logout of all users).
+ * Clears all revoked tokens.
  */
 export const clearRevokedTokens = async () => {
-  await redis.del(REVOKED_TOKENS_SET);
+  inMemoryBlacklist.clear();
+  if (redis && redisAvailable) {
+    try {
+      await redis.del(REVOKED_TOKENS_SET);
+    } catch {
+      // ignore
+    }
+  }
 };
+

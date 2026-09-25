@@ -66,7 +66,7 @@ export default function Login({ onLoginSuccess }) {
     try {
       const ep = isRegister ? '/api/auth/register' : '/api/auth/login';
       const body = isRegister ? { email, password, name } : { email, password };
-      const res = await fetch(ep, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const res = await fetch(ep, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'include', body: JSON.stringify(body) });
       
       let data = {};
       const ct = res.headers.get('content-type');

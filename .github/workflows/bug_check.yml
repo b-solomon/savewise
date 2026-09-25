@@ -1,6 +1,10 @@
 name: Daily Bug Checker
 
 on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   schedule:
     # Run every day at 18:30 UTC (which is exactly 00:00 IST / Midnight IST)
     - cron: '30 18 * * *'
@@ -30,7 +34,7 @@ jobs:
       - name: Check JavaScript Syntax
         run: |
           cd server
-          node --check *.js
+          node --check *.js scripts/*.js
 
       - name: Run Self-Diagnostic Tests
         env:
