@@ -34,7 +34,10 @@ jobs:
       - name: Check JavaScript Syntax
         run: |
           cd server
-          node --check *.js scripts/*.js
+          for file in *.js scripts/*.js; do
+            echo "Checking $file..."
+            node --check "$file"
+          done
 
       - name: Run Self-Diagnostic Tests
         env:
@@ -42,6 +45,7 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET || 'savewise_ci_testing_jwt_secret_key_2026' }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ENCRYPTION_SALT: ${{ secrets.ENCRYPTION_SALT || 'savewise_ci_testing_salt_2026' }}
+          ENCRYPTION_MASTER_KEY: ${{ secrets.ENCRYPTION_MASTER_KEY || 'savewise_ci_testing_master_key_2026' }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           node server/scripts/bugCheck.js
