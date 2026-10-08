@@ -2,9 +2,8 @@
   "name": "savewise",
   "version": "1.0.0",
   "private": true,
-  "workspaces": ["client", "server"],
   "scripts": {
-    "build": "npm run build --prefix client",
-    "start": "npm run start --prefix server"
+    "build": "cd client && npm install && npm run build",
+    "start": "cd server && npm start"
   }
 }

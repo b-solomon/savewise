@@ -36,7 +36,7 @@ function initDatabase() {
             pgPool = new Pool({
               connectionString: currentUrl,
               ssl: { rejectUnauthorized },
-              connectionTimeoutMillis: 2000
+              connectionTimeoutMillis: 5000
             });
 
             await pgPool.query('SELECT NOW()');
@@ -61,6 +61,10 @@ function initDatabase() {
 
             if (retries === 0) {
               console.warn('PostgreSQL connection failed. Falling back to local SQLite database...');
+              if (pgPool) {
+                try { await pgPool.end(); } catch {}
+                pgPool = null;
+              }
               try {
                 await setupSQLite();
               } catch (sqErr) {

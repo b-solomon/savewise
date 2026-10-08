@@ -68,18 +68,39 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false
 }));
 
-// CORS Configuration with strict whitelist
-const defaultOrigins = ['http://localhost:5173', 'http://localhost:3000', 'http://127.0.0.1:5173', 'http://localhost:4000'];
-const allowedOrigins = process.env.ALLOWED_ORIGINS 
+// CORS Configuration with comprehensive whitelist & preview domain support
+const defaultOrigins = [
+  'http://localhost:5173',
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:4000',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
+  'http://127.0.0.1:4000'
+];
+const envOrigins = process.env.ALLOWED_ORIGINS 
   ? process.env.ALLOWED_ORIGINS.split(',').map(s => s.trim()) 
-  : defaultOrigins;
+  : [];
+const allowedOrigins = Array.from(new Set([...defaultOrigins, ...envOrigins]));
+
+const isOriginAllowed = (origin) => {
+  if (!origin) return true; // allow non-browser requests (Postman, server-to-server)
+  if (allowedOrigins.includes(origin)) return true;
+  // Allow any localhost / 127.0.0.1 port in development/local mode
+  if (/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return true;
+  // Allow all Vercel deployment and preview domains
+  if (/^https:\/\/.*\.vercel\.app$/.test(origin)) return true;
+  return false;
+};
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (isOriginAllowed(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('CORS blocked for origin: ' + origin));
+      // Return null, false to reject CORS cleanly without crashing Express into 500 Internal Server Error
+      callback(null, false);
     }
   },
   credentials: true,

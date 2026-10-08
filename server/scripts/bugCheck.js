@@ -266,10 +266,10 @@ async function runAllDiagnostics() {
 
   if (failures === 0) {
     console.log('🟢 ALL SYSTEMS OPERATIONAL: No bugs detected.\n');
-    process.exitCode = 0;
+    process.exit(0);
   } else {
     console.error(`🔴 ALERT: ${failures} diagnostic check(s) failed!\n`);
-    process.exitCode = 1;
+    process.exit(1);
   }
 }
 
