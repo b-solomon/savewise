@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { PiggyBank, Plus, Trash2, X } from 'lucide-react';
+import { authFetch } from '../api';
 const ICONS = ['🎯','🏠','🚗','✈️','💍','🎓','💰','📱','🎮','🏖️','💻','🎸','👶','💪'];
 
 export default function SavingsGoals({ token, addToast }) {
@@ -12,13 +13,22 @@ export default function SavingsGoals({ token, addToast }) {
   const [contId, setContId] = useState(null);
   const [contAmt, setContAmt] = useState('');
 
-  const load = () => { fetch('/api/savings-goals',{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()).then(d=>{if(Array.isArray(d))setGoals(d);}); };
+  const load = () => {
+    authFetch('/api/savings-goals', {}, token)
+      .then(r => r.ok ? r.json() : [])
+      .then(d => { if (Array.isArray(d)) setGoals(d); })
+      .catch(console.error);
+  };
   useEffect(load,[token]);
 
   const create = async (e) => {
     e.preventDefault(); if(!name||!target) return;
     try {
-      const r = await fetch('/api/savings-goals',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({name,targetAmount:parseFloat(target),deadline:deadline||null,icon})});
+      const r = await authFetch('/api/savings-goals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, targetAmount: parseFloat(target), deadline: deadline || null, icon })
+      }, token);
       const d = await r.json();
       if (r.ok && !d.error) {
         setGoals(p=>[d,...p]); setShow(false); setName(''); setTarget(''); setDeadline(''); setIcon('🎯');
@@ -34,7 +44,11 @@ export default function SavingsGoals({ token, addToast }) {
   const contribute = async () => {
     if(!contAmt||parseFloat(contAmt)<=0) return;
     try {
-      const r = await fetch(`/api/savings-goals/${contId}/contribute`,{method:'PUT',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({amount:parseFloat(contAmt)})});
+      const r = await authFetch(`/api/savings-goals/${contId}/contribute`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: parseFloat(contAmt) })
+      }, token);
       const d = await r.json();
       if (r.ok && !d.error) {
         setGoals(p=>p.map(g=>g.id===contId?d:g));
@@ -51,7 +65,7 @@ export default function SavingsGoals({ token, addToast }) {
 
   const del = async (id) => {
     try {
-      const r = await fetch(`/api/savings-goals/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+      const r = await authFetch(`/api/savings-goals/${id}`, { method: 'DELETE' }, token);
       if (r.ok) {
         setGoals(p=>p.filter(g=>g.id!==id));
         addToast({id:Date.now(),type:'success',title:'Deleted',message:'Savings goal removed'});

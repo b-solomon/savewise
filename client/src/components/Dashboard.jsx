@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { IndianRupee, ArrowUpRight, ArrowDownRight, ChevronLeft, ChevronRight, AlertTriangle, TrendingUp, Briefcase, X } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from 'recharts';
+import { authFetch } from '../api';
 
 const CAT_ICONS = {'Food & Dining':'🍕','Transport':'🚗','Shopping':'🛍️','Rent':'🏠','Bills & Utilities':'📱','Entertainment':'🎬','Health':'💊','Education':'📚','Groceries':'🛒','Insurance':'🛡️','EMI & Loans':'🏦','Other':'📌','Salary':'💰','Freelance':'💻','Investment':'📈','Refund':'↩️','Other Income':'💵'};
 
@@ -11,8 +12,14 @@ export default function Dashboard({ token, setActiveTab }) {
   const [prevMonthName, setPrevMonthName] = useState('');
 
   useEffect(() => {
-    fetch(`/api/dashboard/summary?month=${month}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r=>r.json()).then(setS).catch(console.error);
+    authFetch(`/api/dashboard/summary?month=${month}`, {}, token)
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d && !d.error && Array.isArray(d.categoryBreakdown)) {
+          setS(d);
+        }
+      })
+      .catch(console.error);
   }, [month, token]);
 
   useEffect(() => {
@@ -27,8 +34,8 @@ export default function Dashboard({ token, setActiveTab }) {
     const prevMonthLabel = new Date(prevYear, prevMonth - 1).toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
     setPrevMonthName(prevMonthLabel);
 
-    fetch(`/api/ai/monthly-report?month=${prevMonthStr}`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.json())
+    authFetch(`/api/ai/monthly-report?month=${prevMonthStr}`, {}, token)
+      .then(r => r.ok ? r.json() : null)
       .then(d => {
         if (d && d.report) {
           setShowReportBanner(true);
@@ -40,9 +47,14 @@ export default function Dashboard({ token, setActiveTab }) {
   const chgMonth = (d) => { const [y,m] = month.split('-').map(Number); const dt = new Date(y,m-1+d,1); setMonth(`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`); };
   const mLabel = () => { const [y,m] = month.split('-'); return new Date(y,m-1).toLocaleDateString('en-IN',{month:'long',year:'numeric'}); };
 
-  if (!s) return <div className="flex-1 flex items-center justify-center text-gray-500">Loading dashboard...</div>;
+  if (!s || !Array.isArray(s.categoryBreakdown)) {
+    return <div className="flex-1 flex items-center justify-center text-gray-500">Loading dashboard...</div>;
+  }
 
-  const alerts = s.categoryBreakdown.filter(c => c.budgetPercent >= 80);
+  const categoryBreakdown = s.categoryBreakdown || [];
+  const dailyTrend = s.dailyTrend || [];
+  const recentTransactions = s.recentTransactions || [];
+  const alerts = categoryBreakdown.filter(c => c.budgetPercent >= 80);
 
   return (
     <div className="flex-1 p-6 lg:p-8 space-y-6 overflow-y-auto max-h-screen">
@@ -102,13 +114,13 @@ export default function Dashboard({ token, setActiveTab }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <div className="glass rounded-2xl p-5">
           <h4 className="text-xs font-semibold text-white mb-4">Spending by Category</h4>
-          {s.categoryBreakdown.length > 0 ? (
+          {categoryBreakdown.length > 0 ? (
             <div className="flex items-center gap-4">
-              <div className="h-44 w-44 shrink-0"><ResponsiveContainer><PieChart><Pie data={s.categoryBreakdown} dataKey="total" nameKey="category" cx="50%" cy="50%" innerRadius={38} outerRadius={68} paddingAngle={3}>
-                {s.categoryBreakdown.map((e,i) => <Cell key={i} fill={e.color} />)}
+              <div className="h-44 w-44 shrink-0"><ResponsiveContainer><PieChart><Pie data={categoryBreakdown} dataKey="total" nameKey="category" cx="50%" cy="50%" innerRadius={38} outerRadius={68} paddingAngle={3}>
+                {categoryBreakdown.map((e,i) => <Cell key={i} fill={e.color} />)}
               </Pie><Tooltip formatter={v=>`₹${v.toLocaleString('en-IN')}`} /></PieChart></ResponsiveContainer></div>
               <div className="space-y-1.5 flex-1 min-w-0">
-                {s.categoryBreakdown.slice(0,7).map((c,i) => (
+                {categoryBreakdown.slice(0,7).map((c,i) => (
                   <div key={i} className="flex items-center gap-2 text-[11px]">
                     <span className="w-2 h-2 rounded-full shrink-0" style={{backgroundColor:c.color}} />
                     <span className="text-gray-300 truncate">{CAT_ICONS[c.category]||'📌'} {c.category}</span>
@@ -122,8 +134,8 @@ export default function Dashboard({ token, setActiveTab }) {
 
         <div className="glass rounded-2xl p-5">
           <h4 className="text-xs font-semibold text-white mb-4">Daily Spending</h4>
-          {s.dailyTrend.length > 0 ? (
-            <div className="h-44"><ResponsiveContainer><AreaChart data={s.dailyTrend}>
+          {dailyTrend.length > 0 ? (
+            <div className="h-44"><ResponsiveContainer><AreaChart data={dailyTrend}>
               <defs><linearGradient id="eg" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor="#ef4444" stopOpacity={0.3}/><stop offset="95%" stopColor="#ef4444" stopOpacity={0}/></linearGradient></defs>
               <XAxis dataKey="date" tick={{fill:'#6b7280',fontSize:9}} tickFormatter={v=>v.split('-')[2]} />
               <YAxis tick={{fill:'#6b7280',fontSize:9}} tickFormatter={v=>`₹${(v/1000).toFixed(0)}k`} width={45} />
@@ -153,9 +165,9 @@ export default function Dashboard({ token, setActiveTab }) {
       {/* Recent Transactions */}
       <div className="glass rounded-2xl p-5">
         <h4 className="text-xs font-semibold text-white mb-3">Recent Transactions</h4>
-        {s.recentTransactions.length > 0 ? (
+        {recentTransactions.length > 0 ? (
           <div className="space-y-1">
-            {s.recentTransactions.map((t,i) => (
+            {recentTransactions.map((t,i) => (
               <div key={i} className="flex items-center gap-3 py-2 border-b border-white/3 last:border-0">
                 <span className="text-base">{CAT_ICONS[t.category]||'📌'}</span>
                 <div className="flex-1 min-w-0"><p className="text-[11px] font-medium text-white truncate">{t.description||t.merchant||t.category}</p><p className="text-[9px] text-gray-500">{t.date} • {t.payment_method}</p></div>

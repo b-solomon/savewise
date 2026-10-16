@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { Sparkles, Trash2, Search, ChevronLeft, ChevronRight, CheckCircle, AlertCircle, Upload, FileText, Plus } from 'lucide-react';
+import { authFetch } from '../api';
 
 const CAT_ICONS = {'Food & Dining':'🍕','Transport':'🚗','Shopping':'🛍️','Rent':'🏠','Bills & Utilities':'📱','Entertainment':'🎬','Health':'💊','Education':'📚','Groceries':'🛒','Insurance':'🛡️','EMI & Loans':'🏦','Other':'📌','Salary':'💰','Freelance':'💻','Investment':'📈','Refund':'↩️','Other Income':'💵'};
 
-export default function Transactions({ token, categories, addToast }) {
+export default function Transactions({ token, categories = [], addToast }) {
   const [sms, setSms] = useState('');
   const [results, setResults] = useState([]);
   const [parsing, setParsing] = useState(false);
@@ -28,7 +29,10 @@ export default function Transactions({ token, categories, addToast }) {
     let url = `/api/transactions?month=${month}`;
     if (filterCat) url += `&category=${filterCat}`;
     if (filterType) url += `&type=${filterType}`;
-    fetch(url, { headers: { Authorization: `Bearer ${token}` } }).then(r=>r.json()).then(d=>{ if (Array.isArray(d)) setTxns(d); });
+    authFetch(url, {}, token)
+      .then(r => r.ok ? r.json() : [])
+      .then(d => { if (Array.isArray(d)) setTxns(d); })
+      .catch(console.error);
   };
   useEffect(fetchTxns, [month, filterCat, filterType, token]);
 
@@ -36,9 +40,9 @@ export default function Transactions({ token, categories, addToast }) {
     e.preventDefault();
     if (!manualAmount || !manualCat || !manualDate) return;
     try {
-      const r = await fetch('/api/transactions', {
+      const r = await authFetch('/api/transactions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type: manualType,
           amount: parseFloat(manualAmount),
@@ -48,7 +52,7 @@ export default function Transactions({ token, categories, addToast }) {
           date: manualDate,
           paymentMethod: manualPay
         })
-      });
+      }, token);
       const d = await r.json();
       if (r.ok && !d.error) {
         addToast({ id: Date.now(), type: 'success', title: 'Transaction Added', message: `₹${parseFloat(manualAmount).toLocaleString('en-IN')} ${manualType} logged` });
@@ -68,11 +72,19 @@ export default function Transactions({ token, categories, addToast }) {
       const lines = sms.trim().split(/\n{2,}|\n/).filter(l=>l.trim().length>8);
       let data;
       if (lines.length > 1) {
-        const r = await fetch('/api/transactions/bulk-parse', { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body:JSON.stringify({messages:lines}) });
+        const r = await authFetch('/api/transactions/bulk-parse', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ messages: lines })
+        }, token);
         data = await r.json(); setResults(data.results||[]);
         if (data.success>0) addToast({id:Date.now(),type:'success',title:'Parsed!',message:`${data.success}/${data.total} transactions saved`});
       } else {
-        const r = await fetch('/api/transactions/parse-sms', { method:'POST', headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`}, body:JSON.stringify({smsText:sms.trim()}) });
+        const r = await authFetch('/api/transactions/parse-sms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ smsText: sms.trim() })
+        }, token);
         data = await r.json(); setResults([data]);
         if (!data.error) addToast({id:Date.now(),type:'success',title:'Saved!',message:`₹${data.amount} ${data.type} → ${data.category}`});
       }
@@ -85,7 +97,10 @@ export default function Transactions({ token, categories, addToast }) {
     const file = e.target.files?.[0]; if (!file) return;
     const fd = new FormData(); fd.append('file', file);
     try {
-      const r = await fetch('/api/transactions/import-csv', { method:'POST', headers:{Authorization:`Bearer ${token}`}, body:fd });
+      const r = await authFetch('/api/transactions/import-csv', {
+        method: 'POST',
+        body: fd
+      }, token);
       const data = await r.json();
       if (data.error) addToast({id:Date.now(),type:'error',title:'Import Error',message:data.error});
       else { addToast({id:Date.now(),type:'success',title:'CSV Imported',message:data.message}); fetchTxns(); }
@@ -94,7 +109,7 @@ export default function Transactions({ token, categories, addToast }) {
   };
 
   const handleDel = async (id) => {
-    await fetch(`/api/transactions/${id}`, { method:'DELETE', headers:{Authorization:`Bearer ${token}`} });
+    await authFetch(`/api/transactions/${id}`, { method: 'DELETE' }, token);
     setTxns(p=>p.filter(t=>t.id!==id));
   };
 
@@ -103,7 +118,8 @@ export default function Transactions({ token, categories, addToast }) {
 
   const filtered = txns.filter(t => { if (!search) return true; const q=search.toLowerCase(); return t.description?.toLowerCase().includes(q)||t.merchant?.toLowerCase().includes(q)||t.category?.toLowerCase().includes(q); });
   const totals = filtered.reduce((a,t) => { a[t.type]=(a[t.type]||0)+t.amount; return a; }, {});
-  const displayCats = filterType ? categories.filter(c=>c.type===filterType) : categories;
+  const safeCategories = Array.isArray(categories) ? categories : [];
+  const displayCats = filterType ? safeCategories.filter(c=>c.type===filterType) : safeCategories;
 
   return (
     <div className="flex-1 p-6 lg:p-8 space-y-5 overflow-y-auto max-h-screen">

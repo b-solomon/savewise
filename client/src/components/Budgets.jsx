@@ -1,33 +1,45 @@
 import { useState, useEffect } from 'react';
 import { Target, Plus, Trash2 } from 'lucide-react';
+import { authFetch } from '../api';
 
-export default function Budgets({ token, categories, addToast }) {
+export default function Budgets({ token, categories = [], addToast }) {
   const [budgets, setBudgets] = useState([]);
   const [spending, setSpending] = useState({});
   const [cat, setCat] = useState('');
   const [limit, setLimit] = useState('');
   const month = `${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
-  const expCats = categories.filter(c=>c.type==='expense');
-  const catLookup = {}; categories.forEach(c=>{catLookup[c.name]=c;});
+  const catList = Array.isArray(categories) ? categories : [];
+  const expCats = catList.filter(c=>c.type==='expense');
+  const catLookup = {}; catList.forEach(c=>{catLookup[c.name]=c;});
 
   const load = async () => {
-    const [b,s] = await Promise.all([
-      fetch('/api/budgets',{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json()),
-      fetch(`/api/dashboard/summary?month=${month}`,{headers:{Authorization:`Bearer ${token}`}}).then(r=>r.json())
-    ]);
-    if (Array.isArray(b)) setBudgets(b);
-    const m={}; (s.categoryBreakdown||[]).forEach(c=>{m[c.category]=c.total;}); setSpending(m);
+    try {
+      const [resB, resS] = await Promise.all([
+        authFetch('/api/budgets', {}, token),
+        authFetch(`/api/dashboard/summary?month=${month}`, {}, token)
+      ]);
+      const b = resB.ok ? await resB.json() : [];
+      const s = resS.ok ? await resS.json() : {};
+      if (Array.isArray(b)) setBudgets(b);
+      const m={}; ((s && s.categoryBreakdown) || []).forEach(c=>{m[c.category]=c.total;}); setSpending(m);
+    } catch (err) {
+      console.error(err);
+    }
   };
   useEffect(()=>{load();},[token]);
 
   const add = async (e) => {
     e.preventDefault(); if(!cat||!limit) return;
-    await fetch('/api/budgets',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({category:cat,monthlyLimit:parseFloat(limit)})});
+    await authFetch('/api/budgets', {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ category: cat, monthlyLimit: parseFloat(limit) })
+    }, token);
     addToast({id:Date.now(),type:'success',title:'Budget Set',message:`₹${parseFloat(limit).toLocaleString('en-IN')} for ${cat}`});
     setCat(''); setLimit(''); load();
   };
   const del = async (id) => {
-    await fetch(`/api/budgets/${id}`,{method:'DELETE',headers:{Authorization:`Bearer ${token}`}});
+    await authFetch(`/api/budgets/${id}`, { method: 'DELETE' }, token);
     setBudgets(p=>p.filter(b=>b.id!==id));
   };
 

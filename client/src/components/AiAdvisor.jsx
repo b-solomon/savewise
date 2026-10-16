@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Send, Sparkles, FileText, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import rehypeSanitize from 'rehype-sanitize';
+import { authFetch } from '../api';
 const TIPS = ['Where can I cut spending?','Am I on track for my savings goals?','Analyze my spending this month','How can I save ₹5000 more?','Review my stock portfolio','Which budget am I exceeding?'];
 
 export default function AiAdvisor({ token, user }) {
@@ -27,7 +28,11 @@ export default function AiAdvisor({ token, user }) {
     const userMsg = {sender:'user',text:text.trim(),timestamp:new Date().toISOString()};
     const up = [...msgs,userMsg]; setMsgs(up); setInput(''); setLoading(true);
     try {
-      const r = await fetch('/api/ai/chat',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({messages:up})});
+      const r = await authFetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: up })
+      }, token);
       const d = await r.json();
       if (!r.ok || d.error) throw new Error(d.error || 'Failed to get AI response');
       
@@ -45,7 +50,7 @@ export default function AiAdvisor({ token, user }) {
   const getReport = async () => {
     setLoading(true);
     try {
-      const r = await fetch('/api/ai/monthly-report',{headers:{Authorization:`Bearer ${token}`}});
+      const r = await authFetch('/api/ai/monthly-report', {}, token);
       const d = await r.json();
       if (!r.ok || d.error) throw new Error(d.error || 'Failed to get monthly report');
       setReport(d);
@@ -110,11 +115,11 @@ export default function AiAdvisor({ token, user }) {
                       <button 
                         onClick={async () => {
                           try {
-                            const res = await fetch('/api/ai/confirm', {
+                            const res = await authFetch('/api/ai/confirm', {
                               method: 'POST',
-                              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                              headers: { 'Content-Type': 'application/json' },
                               body: JSON.stringify({ actionId: m.pendingAction })
-                            });
+                            }, token);
                             const data = await res.json();
                             if (!res.ok || data.error) throw new Error(data.error || 'Failed to confirm');
                             setMsgs(prev => prev.map((item, idx) => idx === i ? { ...item, confirmed: true, text: `${item.text}\n\n✅ **Action Confirmed:** ${data.message}` } : item));

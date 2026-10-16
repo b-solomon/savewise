@@ -14,6 +14,7 @@ import {
   Building,
   ArrowLeft
 } from 'lucide-react';
+import { authFetch } from '../api';
 
 const BANKS = [
   { id: 'hdfc', name: 'HDFC Bank', color: 'from-[#1c3f94] to-[#0a1c4b]', iconColor: 'text-blue-400' },
@@ -77,14 +78,13 @@ export default function BankSync({ token, phoneUrl, showToast, onSyncSuccess }) 
   const handleConfirmConsent = async () => {
     setIsLoading(true);
     try {
-      const res = await fetch('/api/sync/simulate', {
+      const res = await authFetch('/api/sync/simulate', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({ bank: selectedBank.name })
-      });
+      }, token);
       const data = await res.json();
       setIsLoading(false);
       if (res.ok) {

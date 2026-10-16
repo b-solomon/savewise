@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, Plus, Trash2, Search, Briefcase, RefreshCw, X } from 'lucide-react';
+import { authFetch } from '../api';
 
 export default function Portfolio({ token, addToast }) {
   const [holdings, setHoldings] = useState([]);
@@ -17,8 +18,8 @@ export default function Portfolio({ token, addToast }) {
   const fetchHoldings = async () => {
     setLoading(true);
     try {
-      const r = await fetch('/api/holdings', { headers: { Authorization: `Bearer ${token}` } });
-      const d = await r.json();
+      const r = await authFetch('/api/holdings', {}, token);
+      const d = r.ok ? await r.json() : [];
       if (Array.isArray(d)) setHoldings(d);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -32,8 +33,8 @@ export default function Portfolio({ token, addToast }) {
     if (q.length < 1) { setSearchResults([]); return; }
     setSearchTimeout(setTimeout(async () => {
       try {
-        const r = await fetch(`/api/holdings/search?q=${encodeURIComponent(q)}`, { headers: { Authorization: `Bearer ${token}` } });
-        const d = await r.json();
+        const r = await authFetch(`/api/holdings/search?q=${encodeURIComponent(q)}`, {}, token);
+        const d = r.ok ? await r.json() : [];
         setSearchResults(Array.isArray(d) ? d : []);
       } catch { setSearchResults([]); }
     }, 300));
@@ -55,10 +56,11 @@ export default function Portfolio({ token, addToast }) {
     if (!symbol || !qty || !buyPrice || submitting) return;
     setSubmitting(true);
     try {
-      const r = await fetch('/api/holdings', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      const r = await authFetch('/api/holdings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ symbol, name, exchange, quantity: parseFloat(qty), avgBuyPrice: parseFloat(buyPrice), buyDate: buyDate || undefined })
-      });
+      }, token);
       if (!r.ok) {
         const data = await r.json().catch(() => ({}));
         throw new Error(data.error || `Server error (${r.status})`);
@@ -77,7 +79,7 @@ export default function Portfolio({ token, addToast }) {
   };
 
   const handleDel = async (id, sym) => {
-    await fetch(`/api/holdings/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+    await authFetch(`/api/holdings/${id}`, { method: 'DELETE' }, token);
     setHoldings(p => p.filter(h => h.id !== id));
     addToast({ id: Date.now(), type: 'success', title: 'Removed', message: `${sym} deleted` });
   };

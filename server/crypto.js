@@ -89,8 +89,8 @@ let appKey = null;
 
 export function getAppKey() {
   if (!appKey) {
-    const masterKey = process.env.ENCRYPTION_MASTER_KEY;
-    const salt = process.env.ENCRYPTION_SALT;
+    const masterKey = process.env.ENCRYPTION_MASTER_KEY || (process.env.JWT_SECRET ? process.env.JWT_SECRET + '_master_key_savewise_2026' : null);
+    const salt = process.env.ENCRYPTION_SALT || (process.env.JWT_SECRET ? process.env.JWT_SECRET + '_salt_savewise_2026' : null);
     if (!masterKey || !salt) {
       throw new Error('ENCRYPTION_MASTER_KEY and ENCRYPTION_SALT must be configured in environment');
     }

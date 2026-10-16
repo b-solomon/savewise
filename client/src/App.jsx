@@ -9,6 +9,7 @@ import SavingsGoals from './components/SavingsGoals';
 import AiAdvisor from './components/AiAdvisor';
 import BankSync from './components/BankSync';
 import { X, Menu, Wallet } from 'lucide-react';
+import { authFetch } from './api';
 
 export default function App() {
   const [token, setToken] = useState('');
@@ -47,15 +48,26 @@ export default function App() {
 
   useEffect(() => {
     if (token) {
-      const headers = token !== 'cookie_authenticated' ? { Authorization: `Bearer ${token}` } : {};
-      fetch('/api/auth/me', { headers, credentials: 'include' })
-        .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-        .then(u => { 
-          setUser(u); 
-          fetch('/api/categories', { headers, credentials: 'include' }).then(r => r.json()).then(d => { if (Array.isArray(d)) setCategories(d); });
-          fetch('/api/system/ip', { headers, credentials: 'include' }).then(r => r.json()).then(d => { if (d.ip && d.ip !== 'localhost') setPhoneUrl(`http://${d.ip}:3001`); });
+      authFetch('/api/auth/me', {}, token)
+        .then(r => {
+          if (r.status === 401) {
+            logout();
+            return null;
+          }
+          return r.ok ? r.json() : null;
         })
-        .catch(() => logout());
+        .then(u => {
+          if (u && u.id) setUser(u);
+          authFetch('/api/categories', {}, token)
+            .then(r => r.ok ? r.json() : [])
+            .then(d => { if (Array.isArray(d)) setCategories(d); })
+            .catch(console.error);
+          authFetch('/api/system/ip', {}, token)
+            .then(r => r.ok ? r.json() : {})
+            .then(d => { if (d && d.ip && d.ip !== 'localhost') setPhoneUrl(`http://${d.ip}:3001`); })
+            .catch(console.error);
+        })
+        .catch(console.error);
     }
   }, [token]);
 
@@ -67,7 +79,7 @@ export default function App() {
 
   const logout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+      await authFetch('/api/auth/logout', { method: 'POST' }, token);
     } catch (e) {
       console.error('Logout request failed', e);
     }
