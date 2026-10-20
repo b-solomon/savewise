@@ -1,7 +1,8 @@
 import './loadEnv.js';
-import sqlite3 from 'sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+let sqlite3 = null;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -91,7 +92,16 @@ function initDatabase() {
 
 export const ready = initDatabase();
 
-function setupSQLite() {
+async function setupSQLite() {
+  if (!sqlite3) {
+    try {
+      const sqliteModule = await import('sqlite3');
+      sqlite3 = sqliteModule.default || sqliteModule;
+    } catch (importErr) {
+      console.warn('SQLite3 module not available:', importErr.message);
+      throw new Error('SQLite3 module not available on this platform. Please configure DATABASE_URL.');
+    }
+  }
   return new Promise((resolve, reject) => {
     const dbPath = path.resolve(__dirname, process.env.DATABASE_FILE || 'savewise.db');
     sqliteDb = new sqlite3.Database(dbPath, async (err) => {
