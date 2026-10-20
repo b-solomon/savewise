@@ -14,3 +14,9 @@ export function authFetch(url, options = {}, token = '') {
 
   return fetch(url, opts);
 }
+
+export function fmtInr(val) {
+  if (val === null || val === undefined || val === '') return '0';
+  const num = Number(val);
+  return Number.isFinite(num) ? num.toLocaleString('en-IN') : '0';
+}

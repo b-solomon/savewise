@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Wallet, Mail, Lock, User, ShieldCheck, Eye, EyeOff, Check, X, AlertCircle } from 'lucide-react';
+import HumanVerification from './HumanVerification';
 
 export default function Login({ onLoginSuccess }) {
   const [isRegister, setIsRegister] = useState(false);
@@ -9,6 +10,7 @@ export default function Login({ onLoginSuccess }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [isHumanVerified, setIsHumanVerified] = useState(false);
 
   // Real-time Password Strength Evaluation Rules
   const criteria = {
@@ -55,6 +57,12 @@ export default function Login({ onLoginSuccess }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    // Cloudflare Human Verification Guard
+    if (!isHumanVerified) {
+      setError('Please complete the human verification check before proceeding.');
+      return;
+    }
 
     // Senior Dev Client-Side Validation Guard for Registration
     if (isRegister && !isPasswordValid) {
@@ -189,9 +197,12 @@ export default function Login({ onLoginSuccess }) {
               </div>
             )}
 
+            {/* Cloudflare Turnstile Human Verification Widget */}
+            <HumanVerification onVerify={setIsHumanVerified} verified={isHumanVerified} />
+
             <button
               type="submit"
-              disabled={loading || (isRegister && !isPasswordValid)}
+              disabled={loading || !isHumanVerified || (isRegister && !isPasswordValid)}
               className="w-full py-3.5 rounded-xl bg-gradient-to-r from-savings to-emerald-400 text-white font-semibold text-sm hover:opacity-95 transition disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-savings/15 cursor-pointer mt-2"
             >
               {loading ? 'Processing...' : isRegister ? 'Create Account' : 'Sign In'}
@@ -208,6 +219,7 @@ export default function Login({ onLoginSuccess }) {
               onClick={() => {
                 setIsRegister(!isRegister);
                 setError('');
+                setIsHumanVerified(false);
               }}
               className="text-savings hover:underline font-semibold cursor-pointer"
             >

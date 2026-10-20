@@ -10,6 +10,7 @@ import AiAdvisor from './components/AiAdvisor';
 import BankSync from './components/BankSync';
 import { X, Menu, Wallet } from 'lucide-react';
 import { authFetch } from './api';
+import ErrorBoundary from './components/ErrorBoundary';
 
 export default function App() {
   const [token, setToken] = useState('');
@@ -143,7 +144,9 @@ export default function App() {
       <div className="flex-1 flex flex-col min-w-0 relative">
         <div className="absolute top-0 right-1/4 w-[40vw] h-[30vh] rounded-full bg-savings/4 blur-[140px] pointer-events-none animate-glow" />
         <div className="absolute bottom-1/4 left-1/4 w-[35vw] h-[25vh] rounded-full bg-accent/4 blur-[140px] pointer-events-none animate-glow" style={{ animationDelay: '-4s' }} />
-        {content()}
+        <ErrorBoundary>
+          {content()}
+        </ErrorBoundary>
       </div>
 
       <div className="fixed top-5 right-5 z-50 flex flex-col gap-2 max-w-xs pointer-events-none">
