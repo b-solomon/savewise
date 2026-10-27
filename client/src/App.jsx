@@ -11,6 +11,7 @@ import BankSync from './components/BankSync';
 import { X, Menu, Wallet } from 'lucide-react';
 import { authFetch } from './api';
 import ErrorBoundary from './components/ErrorBoundary';
+import SiteLoader from './components/SiteLoader';
 
 export default function App() {
   const [token, setToken] = useState('');
@@ -21,6 +22,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [phoneUrl, setPhoneUrl] = useState('');
   const [checkingAuth, setCheckingAuth] = useState(true);
+  const [showLoader, setShowLoader] = useState(true);
 
   // Auto-restore session from secure HttpOnly cookie on page load (with 1.5s fast timeout)
   useEffect(() => {
@@ -107,19 +109,8 @@ export default function App() {
     }
   };
 
-  if (checkingAuth) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[#060710] text-gray-400 p-4">
-        <div className="p-3.5 rounded-2xl bg-gradient-to-tr from-savings to-emerald-400 shadow-lg shadow-savings/25 mb-4 animate-pulse">
-          <Wallet className="h-8 w-8 text-white" />
-        </div>
-        <h1 className="text-3xl font-display font-bold text-white tracking-tight">Save<span className="text-gradient">Wise</span></h1>
-        <div className="mt-4 flex items-center gap-2 text-xs text-gray-500">
-          <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
-          <span>Securing session...</span>
-        </div>
-      </div>
-    );
+  if (showLoader || checkingAuth) {
+    return <SiteLoader onComplete={() => setShowLoader(false)} />;
   }
 
   if (!token || !user) return <Login onLoginSuccess={login} />;
